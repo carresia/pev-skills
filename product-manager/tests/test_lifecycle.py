@@ -1122,6 +1122,90 @@ class TestCloseoutFold(LifecycleBase):
         self.assertEqual(h.out_json(proc)["status"], "VERIFYING")
 
 
+class TestReviewFixes2(LifecycleBase):
+    """最终评审修复:replan 重跑登记幻影、终态冻结缺位、带码 warning 透传。"""
+
+    def setUp(self):
+        super().setUp()
+        self.p = self.init()  # PLANNING iter1
+
+    def codes(self, proc):
+        return [e.get("code") for e in h.out_json(proc)["errors"]]
+
+    def test_replan_rerun_does_not_corrupt_registry(self):
+        # 评审发现 1(Critical):replan 重跑的"登记册修复"误用转移后编号,
+        # 登记 (N+1)-artifact.json 幻影条目 → R4 拒绝后续提交,轮次卡死
+        p = h.out_json(self.call("commit.py", "--pm-root", self.p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"], "artifact",
+            str(self.artifact_draft(status="replan_required",
+                                    name="replan.json"))))
+        self.assertEqual(p["iteration"], 2)
+        again = self.call("commit.py", "--pm-root", p["pm_root"],
+                          "artifact",
+                          str(self.artifact_draft(status="replan_required",
+                                                  name="replan.json")))
+        self.assertEqual(again.returncode, 0, again.stdout)
+        state = self.read_state(h.out_json(again))
+        self.assertEqual(state["artifacts"], ["01-artifact.json"],
+                         state["artifacts"])
+        proc = h.run_validate(Path(p["pm_root"]))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_record_provenance_frozen_on_stopped(self):
+        # 评审发现 2:STOPPED 终态上输入冻结命令不得写快照(E_FROZEN_STATE)
+        p = h.out_json(self.call("commit.py", "--pm-root", self.p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = self.forge_status(p, "STOPPED")
+        proc = self.call("record_provenance.py", "--pm-root", p["pm_root"])
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("E_FROZEN_STATE", self.codes(proc))
+        self.assertFalse((Path(p["pm_root"]) / "iterations" /
+                          "01-verification-input.json").is_file())
+
+    def test_render_publish_frozen_on_superseded(self):
+        # 评审发现 2:SUPERSEDED 终态上渲染发布冻结
+        p = h.out_json(self.call("commit.py", "--pm-root", self.p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "supersede", "--note", "换目标"))
+        proc = self.call("render.py", "--pm-root", p["pm_root"])
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("E_FROZEN_STATE", self.codes(proc))
+        self.assertFalse((Path(p["pm_root"]) / "output").is_dir())
+
+    def test_render_publish_still_repairs_on_complete(self):
+        # 对照:COMPLETE 轮的重渲染修复路径保留(hand-edited output 覆盖)
+        p = self.init()
+        p = self.reach_verifying(p)
+        p = self.bind_pass(p)  # → COMPLETE
+        proc = self.call("render.py", "--pm-root", p["pm_root"])
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_coded_warning_passthrough_keeps_shape(self):
+        # 评审发现 5:commit 透传 validate 带码 warning 不得字符串化成 dict 外观
+        p = self.init()
+        p = self.reach_verifying(p)
+        pm = Path(p["pm_root"])
+        snap = self.snapshot(p)
+        ver = h.min_verification()
+        ver["verification_input"] = snap
+        (pm / "iterations" / "01-verification.json").write_text(
+            json.dumps(ver, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")  # 存量口径:当轮未绑定报告 → P3 带码警告
+        patch = self.draft("patch-w.json", {"known": ["一条事实"]})
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "state-update", str(patch))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any(isinstance(w, dict)
+                            and w.get("code") == "P3_UNBOUND_CURRENT"
+                            for w in payload["warnings"]), payload["warnings"])
+
+
 class TestReopenPath(LifecycleBase):
     """任务 2.6:同轮 reopen 死路解除(design §1.3,R6/R8/R9/R15)。
 

@@ -381,6 +381,13 @@ def main():
     state = load_state(pm, rep)
     if state is None:
         return rep.emit()
+    # 终态冻结(发布形态;评审修复):STOPPED/SUPERSEDED 不得再发布;
+    # COMPLETE 保留重渲染修复路径(hand-edited output 覆盖),诊断模式不限
+    if mode == "publish" and state.get("status") in ("STOPPED", "SUPERSEDED"):
+        rep.error("state.json", "$.status",
+                  f"{state.get('status')} 为终点,渲染发布冻结(E_FROZEN_STATE)",
+                  code="E_FROZEN_STATE")
+        return rep.emit()
     iteration = rep.iteration
     if not isinstance(iteration, int) or iteration < 1:
         rep.error("state.json", "$.iteration",

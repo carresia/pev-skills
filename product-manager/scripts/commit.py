@@ -48,16 +48,22 @@ ARTIFACT_EVENT = {"completed": "artifact-validated",
                   "blocked": "executor-blocked"}
 
 
-def already_transferred(state, event, ref, iteration):
-    """本命令对应的阶段转移是否已随先前一次执行落盘(幂等重跑判定)。"""
+def find_transferred(state, event, ref, iteration):
+    """本命令对应的阶段转移是否已随先前一次执行落盘(幂等重跑判定)。
+
+    命中返回该转移条目(登记册修复需要其 from_iteration——产物登记在
+    转移前的编号下,replan 分支转移后 iteration 已 +1),未命中返回 None。
+    """
     entries = state.get("transitions") or []
     if not entries:
-        return False
+        return None
     last = entries[-1]
-    return (last.get("event") == event
+    if (last.get("event") == event
             and last.get("ref_sha256") == ref
             and last.get("to_iteration") == iteration
-            and last.get("to") == state.get("status"))
+            and last.get("to") == state.get("status")):
+        return last
+    return None
 
 
 def transfer(pm, state, rep, event, src, dst, it, new_it, ref,
@@ -305,7 +311,10 @@ def post_validate(pm, rep):
     for e in payload.get("errors", []):
         rep.error(e.get("file"), e.get("json_path"), e.get("reason"))
     for w in payload.get("warnings", []):
-        rep.warn(w)
+        if isinstance(w, dict):  # 透传时保持 {text, code} 形态,不字符串化
+            rep.warn(w.get("text", str(w)), w.get("code"))
+        else:
+            rep.warn(w)
     if not payload.get("ok"):
         rep.warn("写后校验失败;若为登记册不一致,恢复动作是重跑同一 commit 命令")
 
@@ -525,9 +534,13 @@ def main():
         # 事件面合并后的幂等重跑:转移已随本命令落盘 → 判已执行退出 0
         rerun_event = ("plan-validated" if sub == "plan"
                        else ARTIFACT_EVENT.get(draft.get("status")))
-        if rerun_event and already_transferred(
-                state, rerun_event, canonical_sha256(draft), iteration):
-            rerun_name = f"{iteration:02d}-{sub}.json"
+        matched = find_transferred(state, rerun_event,
+                                   canonical_sha256(draft), iteration) \
+            if rerun_event else None
+        if rerun_event and matched is not None:
+            # 产物登记在转移前编号下(replan 分支转移后 iteration 已 +1)
+            reg_it = matched.get("from_iteration", iteration)
+            rerun_name = f"{reg_it:02d}-{sub}.json"
             reg = state.setdefault(sub + "s", [])
             if rerun_name not in reg:  # 收敛:修复被回滚的登记册
                 reg.append(rerun_name)

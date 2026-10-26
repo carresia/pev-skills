@@ -45,6 +45,13 @@ def main():
     state = load_state(pm, rep)
     if state is None:
         return rep.emit()
+    # 终态冻结:输入冻结命令在终态轮上不可用(评审修复,design §8 E_FROZEN_STATE)
+    if state.get("status") in ("COMPLETE", "STOPPED", "SUPERSEDED"):
+        rep.error("state.json", "$.status",
+                  f"{state.get('status')} 为终点,输入冻结命令不可用;"
+                  "STOPPED 恢复经 resume --raise-limit,废弃换轮经 supersede+carry-from",
+                  code="E_FROZEN_STATE")
+        return rep.emit()
     iteration = rep.iteration
     if not isinstance(iteration, int) or iteration < 1:
         rep.error("state.json", "$.iteration",
