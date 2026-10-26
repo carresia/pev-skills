@@ -35,152 +35,83 @@ description: |
 - **PRD 缺 §5 范围或 §6 数据需求章节** → Verifier 的覆盖检查将失去锚点,先要求补齐再澄清。
 - **未决问题全部集中在同一章节** → 说明该章节本身没写清,建议整章重写,而非逐条追问。
 
-## 运行目录
+## 命令面(唯一执行协议)
 
-`.pev/` 是 PEV 家族三个 skill(product-manager、本 skill、behavior-decompose)
-共享的根目录,按需求目标分轮次目录 `prd-<日期>/`(命名与创建规则见
-product-manager)。本 skill 的工作目录是轮次目录下的 `rc/`:
+命令只在模型必须拿主意的地方存在;下一步已确定的步骤由命令自动做完
+(渲染、绑定、状态推进、收口都是脚本内部行为,**模型不得手做**)。
+每条命令的 stdout 是单行 JSON;**一律原样执行上一命令返回的 `next[].argv`
+(或按 `next[].kind` 行动)**,不要自行发明下一步。
+
+| 何时用 | 命令 |
+|---|---|
+| 开始/续接一轮澄清 | `python3 <skill>/scripts/init.py --workspace <含 .pev/ 的目录> --prd-source <PRD 路径> --objective <goal 草稿路径>` |
+| 不知道从哪轮续接 | `python3 <skill>/scripts/init.py --locate --workspace <目录>`(只读汇报) |
+| 用户要求推倒重来 | 同上 init 加 `--restart`(自动归档 rc.bak-<日期>) |
+| Plan 草稿写完 | `python3 <skill>/scripts/commit.py --rc-root <rc 目录> plan <草稿路径>` |
+| Artifact 草稿写完(草稿 `status` 字段即岔路:completed/replan_required/blocked) | `python3 <skill>/scripts/commit.py --rc-root <rc 目录> artifact <草稿路径>` |
+| 验证报告写完(报告 `verdict` 字段即岔路:PASS/REVISE/REPLAN/BLOCKED) | `python3 <skill>/scripts/commit.py --rc-root <rc 目录> verification <草稿路径>`;**verdict=PASS 时同一命令自动完成绑定、渲染与收口** |
+| 用户答复了 blocked 的问题(补丁字段即岔路:invalidate_plan/back_to_prd/prd_refreshed) | `python3 <skill>/scripts/commit.py --rc-root <rc 目录> state-update <补丁路径>` |
+| 用户要求修订已收口的轮 | `python3 <skill>/scripts/reopen.py --rc-root <rc 目录> --note <修订要点>` |
+| 任何时候想确认现状/定位续跑点 | `python3 <skill>/scripts/validate.py --rc-root <rc 目录>`(只读) |
+
+**写入边界**:state.json、登记册、验证输入快照、provenance、`output/spec.md`
+一律由脚本写;模型只写三类草稿文件(plan/artifact/verification JSON,按
+`schemas/` 校验)与 state-update 补丁。手改脚本管辖的文件会被逐字节/摘要
+校验当场发现并拒绝。
+
+## 草稿要点
+
+- **Plan**(`agents/planner.md` 为角色指令,先执行「Proactive Triggers」预警):
+  严格两层——①`interrogate_value` 价值性提问;②`interrogate_ambiguity` 逐章
+  扫描落地模糊地带(业务规则/权限与状态/异常与边界/数据口径/范围)。价值先行
+  由脚本强制(R5)。
+- **Artifact**(`agents/executor.md`):只执行当前 Plan 批次;**追踪优先**——
+  ①PRD(prd_source)②同轮 `.pev/<轮次>/pm/` 中间产物 ③codebase;追到的答案写
+  `artifact.answers`(question/answer/source)并给 `evidence` 带上 FACT 条目
+  (脚本会自动同步进 state 的 Evidence Ledger,不要手改 state);追不到 →
+  `status="blocked"`+`replan_reason`,不要编答案。
+- **Verification**(`agents/verifier.md`):独立审查。有子代理能力就 spawn 只读
+  子代理,只给文件路径,不转述对话推理;无子代理就只从文件重推。报告必须
+  **逐字段复述** `iterations/<N>-verification-input.json` 到
+  `verification_input` 字段(提交时脚本核对,不一致即拒收)。
+- **等待恢复补丁**(state-update):用户答复 → `evidence`(DECISION 条目)+
+  `answers`;答复推翻 Plan → 加 `invalidate_plan:true`;选"回 PM" →
+  `back_to_prd:true`+`prd_gaps`;PRD 已更新 → `prd_refreshed:true`。
+
+## 运行目录
 
 ```text
 .pev/<轮次>/
-├── pm/                        # product-manager 的产物(Evidence Ledger、PRD),合法追踪源
+├── pm/                        # product-manager 的产物(PRD),合法追踪源,引用不复制
 ├── rc/                        # 本 skill 的工作目录
-│   ├── state.json             # 共享状态(schemas/state.schema.json),含 prd_source
+│   ├── state.json             # 共享状态(schemas/state.schema.json;脚本管辖)
 │   ├── iterations/
-│   │   ├── 01-plan.json       # 每轮产物按 schema 校验
+│   │   ├── 01-plan.json       # <N> = 写入时 iteration+1;REVISE 轮无新 plan 属正常
 │   │   ├── 01-artifact.json
-│   │   └── 01-verification.json
-│   └── output/                # PASS 后按 templates/ 渲染的最终交付物
+│   │   ├── 01-verification-input.json  # 脚本冻结的验证输入快照
+│   │   ├── 01-verification.json        # PASS 后含脚本写入的 provenance
+│   │   └── ...
+│   └── output/
+│       └── spec.md            # 唯一交付物;只由 PASS 收口链确定性渲染产生
 └── decompose/                 # behavior-decompose 的工作目录(结构同 rc/)
 ```
 
-上游 PRD **引用不复制**。`state.prd_source` 记录其路径(通常
-`.pev/<轮次>/pm/output/prd.md`),追踪与打回都以它为准。轮次跟随 PRD:PRD
-在 `.pev/` 某轮的 pm/ 下,本 skill 就在该轮的 rc/ 工作。同轮 `pm/` 下的
-中间产物(Evidence Ledger、迭代记录)是合法追踪源,按需读取,不拷入 `rc/`。
+`state.prd_source` 记录上游 PRD 路径(通常 `.pev/<轮次>/pm/output/prd.md`,
+或用户直接提供的文档),追踪与打回都以它为准。找不到 PRD 不开工:还没 PRD →
+`product-manager`;从零澄清写 spec → `spec-driven-development`。
 
-文件名中的 `<N>` 是迭代号,等于写入时的 `state.iteration + 1`(初始 iteration=0,首轮即 01)。REVISE 轮复用原 Plan,因此只有
-`<N>-artifact.json` / `<N>-verification.json` 而没有 `<N>-plan.json`,这是正常的,不是缺文件。
+## 恢复纪律(任意位置断电)
 
-## 状态机
-
-```text
-INIT → PLANNING → EXECUTING → VERIFYING
-                                  │
-        PASS ────────────────► COMPLETE
-        REVISE ──────────────► EXECUTING(重执行,不改 Plan)
-        REPLAN ──────────────► PLANNING(重规划)
-        BLOCKED ─────────────► WAITING_FOR_INPUT(向用户呈未决问题,见恢复协议)
-                                  │
-        用户直接答复 ─────────► 回到 resume_to 记录的阶段
-        用户选"回 PM" ────────► WAITING_FOR_PRD(记 prd_gaps,挂起等 PRD 更新)
-                                  │
-        PRD 已更新 ────────────► PLANNING(iteration+1,只重规划受影响问题)
-```
-
-## 校验
-
-每步产物写入文件后,先把**文件名**登记进 `state.plans` / `state.artifacts`(按产物类型,不存内容副本),再运行捆绑校验脚本——脚本双向对账登记册与 `iterations/` 目录(R10),确定性检查交给脚本,不要靠肉眼比对:
-
-```bash
-python3 <skill 目录>/scripts/validate.py <项目>/.pev/<轮次>/rc/
-```
-
-校验失败立即修复,不得带病流转。仅当环境无法执行 Python 时才逐字段人工对照
-`schemas/`,并在最终报告里注明"未经过脚本校验"。
-
-## 执行协议
-
-严格按以下顺序运行。适用于 Claude Code 与 Codex 双端。
-
-### 0. 恢复(仅当 .pev/ 已存在)
-
-先确定轮次目录:默认取 `.pev/` 下最新一个含 `rc/state.json` 的轮次,用户点名
-则用点名的目录。没有任何轮次含 `rc/state.json`(轮次也可能由
-product-manager、behavior-decompose 单独创建)时,没有可恢复的澄清状态,按第 1 节 INIT。
-
-确定轮次后读取该轮 `rc/state.json`,向用户汇报 status、iteration、最近一次
-verdict、未决问题数,从该状态继续。**不要重新 INIT,不要覆盖已有产物。**仅当
-用户明确要求"重新开始"时,把 `rc/` 归档为 `rc.bak-<日期>/`(不动同轮的
-pm/、decompose/),在本轮次内重建。
-
-### 1. INIT
-
-- 定位上游 PRD:优先 `.pev/` 下最新一个含 `pm/output/prd.md` 的轮次,用户直接给路径亦可。
-- **找不到 PRD → 不 INIT,分流引导**:还没 PRD → `product-manager`;从零澄清写 spec → `spec-driven-development`。
-- 确定轮次目录:PRD 在 `.pev/` 某轮的 pm/ 下 → 轮次取该轮;PRD 是外部路径 → 新开 `prd-<今日日期>/` 轮次(同日已有同名目录时,追加 `-2`、`-3`)。
-- 创建 `.pev/<轮次>/rc/state.json`:`status="INIT"`、`iteration=0`、`max_iterations=5`、`prd_source=<PRD 路径>`。
-- 澄清目标(goal)能从 PRD §2 推断则推断并记入 `assumptions`;不能则向用户一次性问齐,不要逐条追问。
-
-### 2. PLANNING
-
-- 以 `agents/planner.md` 为角色指令(通读 PRD 时先执行「Proactive Triggers」预警),产出**问题规划**,严格两层:
-  ①`interrogate_value` 价值性提问(为什么做/价值假设/不做会怎样/成功长什么样);
-  ②`interrogate_ambiguity` 逐章扫描落地模糊地带(业务规则/权限与状态/异常与边界/数据口径/范围)。
-- 写入 `.pev/<轮次>/rc/iterations/<N>-plan.json`,运行校验脚本。
-- 通过后:`status="EXECUTING"`。
-
-### 3. EXECUTING
-
-- 以 `agents/executor.md` 为角色指令,**只执行当前 Plan 的问题批次**。
-- **追踪优先**:每个问题依次查 ①PRD(prd_source)②同轮 `.pev/<轮次>/pm/` 的中间产物(若存在)③codebase;追到的答案写入 `artifact.answers`(question/answer/source)并同步 `state.evidence`(FACT,evidence=PRD §x / 产物路径 / 代码文件)。
-- 追踪不到的问题进未决清单,**不要编答案**:artifact `status="blocked"`(replan_reason 写明缺什么/为什么重要),跳到第 5 步 BLOCKED 分支。
-- 全部问题闭环后,`draft` 聚合出 Spec 正文写入 `<N>-artifact.json` 的 `artifact` 块,运行校验脚本。
-- 通过后:`status="VERIFYING"`。
-- Artifact `status="replan_required"` 时跳到第 5 步分支处理。
-
-### 4. VERIFYING(独立性机制)
-
-Verifier 的价值来自独立,双端按各自能力选择实现:
-
-- **有子代理能力(如 Claude Code)**:spawn 一个只读子代理,只给它
-  `agents/verifier.md` 和 `.pev/<轮次>/rc/` 相关文件路径(state + 当前迭代的
-  plan/artifact),以及 `prd_source` 指向的 PRD 文件。**不要转述对话中的推理过程**,只传文件。
-- **无子代理(如 Codex 单会话)**:切换到 Verifier 角色后,**只从文件重新推导**
-  ——重读 state.json、当前迭代产物与 PRD,以文件内容为唯一依据,刻意不引用
-  EXECUTING 阶段的推理(文件里没有的,视为不存在)。
-
-无论哪种方式:产出写入 `.pev/<轮次>/rc/iterations/<N>-verification.json`,运行校验脚本。
-
-### 5. 分支
-
-| Verdict | 动作 |
-|---|---|
-| `PASS` | 按 `templates/spec.md` 渲染最终交付物到 `.pev/<轮次>/rc/output/spec.md`,`status="COMPLETE"` |
-| `REVISE` | Plan 不变,Executor 按 `required_changes` 修订 Artifact;`iteration+1`,回 EXECUTING |
-| `REPLAN` | Planner 吸收 `critical_issues`/`evidence_gaps` 重规划;`iteration+1`,回 PLANNING |
-| `BLOCKED` | `status="WAITING_FOR_INPUT"`,`resume_to="EXECUTING"`,向用户逐问列出:问题 / 为什么重要 / 推荐答案 / **三选一**(①回 PM 重新提需求 ②PM 补充需求 ③直接答复) |
-
-Executor 输出 `replan_required` / `blocked` 时同样进入对应分支(回 PLANNING 或
-WAITING_FOR_INPUT),`resume_to` 记 `EXECUTING`。
-
-### 6. WAITING_FOR_INPUT 恢复协议
-
-用户答复后:
-
-1. 答复合并进 state:直接答复的 → `DECISION` 入 Evidence Ledger(evidence=澄清记录锚点,如 `01-artifact answers#q3`),并记入当前轮 artifact 的 `decisions`;
-2. `iteration` 不变——这是同一段工作的继续,不是新一轮;
-3. `status = resume_to`,清除 `resume_to`,从中断处继续;
-4. 答复中选了"回 PM"(①或②)→ 不硬续:把对应问题逐条写入 `prd_gaps`(question + prd_anchor),`status="WAITING_FOR_PRD"`;
-5. 若答复使当前 Plan 失效,按 REPLAN 处理(`iteration+1`,回 PLANNING)。
-
-### 7. WAITING_FOR_PRD 恢复协议
-
-用户告知 PRD 已更新(通常经 product-manager 的 REPLAN 完成):
-
-1. 重读 `prd_source` 与同轮 `.pev/<轮次>/pm/` 的新产物,diff 出变化;
-2. 清空 `prd_gaps`;已闭环的 answers / Ledger 条目保留,不重问;
-3. PRD 更新推翻既有 DECISION 的,对应问题重开;
-4. 回 PLANNING(`iteration+1`),只重规划受影响的问题批次。
-
-### 8. 迭代上限
-
-`iteration > max_iterations` 时立即停止,**明确报告**:当前最佳 Spec 状态、未解决的
-critical_issues、仍未闭环的问题。不得宣称完成。
+一切写入原子且幂等:**中断后重跑中断的那条命令即收敛**,不重复递增 iteration,
+不产生半程账本。接手时只做三件事:跑 `init.py --locate` 找到轮次 → 读
+`validate.py` 输出的 status/iteration/errors → 按"命令面"表从中断处继续。
+**不要重新 INIT,不要覆盖或手改已有产物。**状态机规则(什么状态允许什么命令、
+迭代上限、渲染一致性)全部由脚本与测试强制,模型无需背诵,按命令面的
+"何时用"列选择即可。
 
 ## Evidence Ledger 规则
 
-`state.evidence` 中每条 claim 必须标注类型:
+`state.evidence` 中每条 claim 必须标注类型(由脚本按 R1 强制):
 
 ```json
 {"claim": "PRD §2 目标为提升新用户激活率", "type": "FACT", "evidence": "PRD §2", "confidence": "high"}
@@ -188,7 +119,7 @@ critical_issues、仍未闭环的问题。不得宣称完成。
 {"claim": "激活窗口期定为注册后 24 小时", "type": "DECISION", "evidence": "01-artifact answers#q3", "confidence": "high"}
 ```
 
-- `FACT`(证据=PRD §x / `.pev/<轮次>/pm/` 产物 / 代码文件)与 `DECISION`(证据=澄清记录锚点)都必须有非空 `evidence`(校验脚本强制);没有证据的结论只能标 `INFERENCE` / `HYPOTHESIS` / `UNKNOWN`。
+- `FACT`(证据=PRD §x / `.pev/<轮次>/pm/` 产物 / 代码文件)与 `DECISION`(证据=澄清记录锚点)都必须有非空 `evidence`;没有证据的结论只能标 `INFERENCE` / `HYPOTHESIS` / `UNKNOWN`。
 - Verifier 以 Ledger 为准自动检查:答案无来源 → 不允许作为 Spec 依据,记入 `evidence_gaps`。
 
 ## Playbook 路由

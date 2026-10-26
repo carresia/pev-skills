@@ -53,7 +53,9 @@ Plan 必须尽可能短,不为显得详尽而堆问题;每个问题都要对应�
 
 ## Output
 
-严格输出符合 `schemas/plan.schema.json` 的 JSON:
+严格输出符合 `schemas/plan.schema.json` 的 JSON,保存为草稿文件后经
+`commit.py --rc-root <rc 目录> plan <草稿路径>` 提交;落盘、登记与状态推进
+由脚本完成,**不要手改 state.json 或登记册**:
 
 ```json
 {

@@ -16,18 +16,19 @@
 ③ codebase(埋点/字段/接口是否存在等工程事实)
 ```
 
-- 追到答案 → 写入 `answers`(question/answer/source),并同步 Evidence
-  Ledger(`FACT`,evidence=PRD §x / `.pev/<轮次>/pm/` 产物路径 / 代码文件)。
+- 追到答案 → 写入 `answers`(question/answer/source),并在草稿 `evidence`
+  数组给对应结论加 `FACT` 条目(evidence=PRD §x / `.pev/<轮次>/pm/` 产物路径 /
+  代码文件;提交时脚本自动并入 state 的 Evidence Ledger,不要手改 state)。
 - 追不到 → 进未决清单。**不要自己编答案,也不要替 PM 圆场。**
 
 ## Rules
 
 1. **严格按 Plan 执行**,只执行 Plan 批准的问题批次。
-2. 所有结论必须标记来源类型:`[FACT]` `[INFERENCE]` `[HYPOTHESIS]` `[UNKNOWN]` `[DECISION]`,同步写入 state 的 Evidence Ledger。
+2. 所有结论必须标记来源类型:`[FACT]` `[INFERENCE]` `[HYPOTHESIS]` `[UNKNOWN]` `[DECISION]`,写入草稿 `evidence` 数组(提交时脚本自动并入 Evidence Ledger)。
 3. **不自答产品问题**:产品行为 / 业务规则 / 优先级 / 范围取舍,追踪不到就进未决清单。
 4. 未决问题按批呈用户,每问附:**为什么重要 / 推荐答案 / 三选一**(①回 PM 重新提需求 ②PM 补充需求 ③直接答复)。artifact 置 `status="blocked"`,replan_reason 写明缺什么/为什么重要/怎么获取。
-5. 用户直接答复 → `DECISION` 入 Evidence Ledger(evidence=澄清记录锚点,如 `01-artifact answers#q3`)。
-6. 用户选"回 PM"(①或②)→ 未决问题保留在 `unresolved`,由执行协议转 `WAITING_FOR_PRD`,你不要试图替代 PM 修改 PRD。
+5. 用户直接答复由 state-update 恢复补丁入账(`DECISION` 进 Evidence Ledger,evidence=澄清记录锚点,如 `01-artifact answers#q3`),脚本负责并入 Artifact,你不手工合并。
+6. 用户选"回 PM"(①或②)→ 未决问题保留在 `unresolved`,由 state-update 补丁(`back_to_prd`)转 `WAITING_FOR_PRD`,你不要试图替代 PM 修改 PRD。
 7. 发现 Plan 存在根本问题(问错了层、漏了整片区域)→ 停止,输出 `status="replan_required"`:Problem / Why Current Plan Is Invalid / New Information / Recommended Re-plan。
 
 ## Spec Drafting

@@ -43,6 +43,7 @@ plan / artifact + prd_source 指向的 PRD)。EXECUTING 阶段的推理过程不
 ```json
 {
   "verdict": "PASS | REVISE | REPLAN | BLOCKED",
+  "verification_input": {},
   "strengths": [],
   "critical_issues": [],
   "warnings": [],
@@ -51,5 +52,11 @@ plan / artifact + prd_source 指向的 PRD)。EXECUTING 阶段的推理过程不
   "confidence": "high | medium | low"
 }
 ```
+
+`verification_input` 必须是 `iterations/<N>-verification-input.json` 快照的
+**逐字段拷贝**——它是"你验证的就是这份输入"的凭证,提交时脚本逐字段核对,
+不一致即拒收;不要手抄或省略。写完经
+`commit.py --rc-root <rc 目录> verification <草稿路径>` 提交,verdict=PASS 时
+绑定、渲染与收口由该命令自动完成,你不要手工渲染 spec.md 或改写状态。
 
 `verdict != PASS` 时,每条 issue 必须写清:**What is wrong / Why it matters / What must change**。
