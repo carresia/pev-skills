@@ -147,6 +147,22 @@ def format_value(value, ctx, var, nullable):
     return esc_inline(text)
 
 
+def strip_template_comments(text):
+    """剥离整行 HTML 注释(行首可选空白 + <!-- 起 --> 止、整行仅含注释)。
+
+    半行注释(注释前后还有正文)保守保留,避免误删正文;在占位符替换前
+    执行,模板起草指引随整行剥离、不进入交付稿(design §7)。
+    """
+    kept = []
+    for line in text.split("\n"):
+        s = line.strip()
+        if (s.startswith("<!--") and s.endswith("-->")
+                and s.count("-->") == 1 and len(s) >= len("<!-->")):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def substitute(text, scopes, nullable=(), empty_ok=()):
     """按行替换 {{var}}:表格行用单元格转义,独占一行的用正文逐字,其余行内转义。
 
@@ -327,7 +343,9 @@ def render_document(name, plan_doc, artifact, state, rep, plan_path, artifact_na
                     | set(spec.get("optional_array", ()))
                     | set(spec.get("nullable_array", ()))
                     | waived)
-        text = expand_loops(template_text, ctx_data, state, spec, source_file,
+        # 整行注释剥离先于占位符替换:模板起草指引不进入交付稿(design §7)
+        text = strip_template_comments(template_text)
+        text = expand_loops(text, ctx_data, state, spec, source_file,
                             empty_ok=empty_ok)
         text = substitute(text, [ctx_data], empty_ok=empty_ok)
         if "{{" in text:

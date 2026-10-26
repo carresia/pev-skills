@@ -14,16 +14,16 @@ E1 = dict(claim="合成论断1", type_="FACT", evidence="activation_rate.csv")
 E2 = dict(i=2, claim="合成论断2", type_="HYPOTHESIS", evidence=None,
           confidence="low")
 
-EXPECTED_PRD = """# PRD: 合成 PRD:消息推送优化
+EXPECTED_PRD = """# 合成 PRD:消息推送优化
 
 ## 1. 背景
 
-留存数据显示新用户次周流失集中在首周内。（含证据引用）
+留存数据显示新用户次周流失集中在首周内。
 
 ## 2. 目标
 
 - 业务目标：通过首周引导推送把次周留存率从 20% 提升到 25%
-- Primary Metric: 次周留存率（baseline → target）
+- Primary Metric: 次周留存率
 - Secondary Metrics: 
 - Guardrail Metrics: 
 
@@ -34,7 +34,7 @@ EXPECTED_PRD = """# PRD: 合成 PRD:消息推送优化
 
 ## 4. 方案
 
-首周第 1/3/5 天推送个性化引导（为什么对应根因：流失时点集中在第 2-4 天,引导推送对应补齐）
+首周第 1/3/5 天推送个性化引导（依据：流失时点集中在第 2-4 天,引导推送对应补齐）
 
 ## 5. 功能范围
 
@@ -47,11 +47,9 @@ EXPECTED_PRD = """# PRD: 合成 PRD:消息推送优化
 
 ## 6. 验证数据需求（埋点与口径）
 
-本节定义上线后需要收集哪些数据来验证这个需求的价值。如果某个指标的口径在现有项目中不存在，对应的数据采集工作就是开发工作，必须列入第 5 节的 In Scope。
-
 | 指标 | 口径定义 | 验证什么 | 数据来源 |
 |---|---|---|---|
-| 次周留存率 | 注册后第 7-14 天活跃占比 | 验证目标达成 | 现有埋点（现有 / 需新增） |
+| 次周留存率 | 注册后第 7-14 天活跃占比 | 验证目标达成 | 现有埋点 |
 
 
 ## 7. 风险与预案
@@ -310,7 +308,7 @@ class TestPrdRendering(RenderBase):
         proc = self.render()
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn(
-            "推送 \\*首周\\* 引导 \\`码\\` \\[链\\] \\<b\\>（为什么对应根因",
+            "推送 \\*首周\\* 引导 \\`码\\` \\[链\\] \\<b\\>（依据：",
             self.read_output())
 
     def test_scalar_newline_flattened_inline(self):
@@ -327,7 +325,7 @@ class TestPrdRendering(RenderBase):
         self.pm.write_doc(1, "artifact", self.artifact)
         proc = self.render()
         self.assertEqual(proc.returncode, 0, proc.stdout)
-        self.assertIn("| 率\\|表 | 含\\\\反斜杠 | 两 行 | 现有埋点（现有 / 需新增） |",
+        self.assertIn("| 率\\|表 | 含\\\\反斜杠 | 两 行 | 现有埋点 |",
                       self.read_output())
 
 
@@ -514,6 +512,71 @@ class TestProtocol(RenderBase):
                 payload = h.out_json(self.render(*flags))
                 self.assertTrue(payload["ok"])
                 self.assertEqual(payload["next"], [])
+
+
+class TestTemplateComments(RenderBase):
+    """任务 3.3:模板填写注释剥离与标题修复(design §7,R26)。
+
+    Why:模板 5 处静态指导文字逐字进入最终交付稿(P1-8,重放交付稿实测
+    携带);标题前缀与含"PRD"的标题拼用会重复。修复:整行 HTML 注释在
+    占位符替换前剥离,半行注释保守保留;标题改为 # {{title}}。
+    """
+
+    @staticmethod
+    def strip(text):
+        import sys as _sys
+        scripts = str(h.SKILL_ROOT / "scripts")
+        if scripts not in _sys.path:
+            _sys.path.insert(0, scripts)
+        import render as r
+        return r.strip_template_comments(text)
+
+    def test_whole_line_comment_stripped_half_line_kept(self):
+        out = self.strip(
+            "正文\n"
+            "   <!-- 整行注释 -->\n"
+            "正文 <!-- 半行注释 --> 保留\n"
+            "<!-- 起头 --> 但后面还有正文\n")
+        self.assertEqual(out,
+                         "正文\n正文 <!-- 半行注释 --> 保留\n"
+                         "<!-- 起头 --> 但后面还有正文\n")
+
+    def test_strip_runs_before_substitution(self):
+        # 注释行内的占位符随整行剥离,不进入替换阶段(否则无数据会报错)
+        stripped = self.strip("<!-- 指引: {{不存在的占位符}} 的口径要写清 -->\n正文")
+        self.assertEqual(stripped, "正文")
+        self.assertNotIn("{{", stripped)
+
+    def test_prd_render_has_no_fill_hints(self):
+        proc = self.render()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        text = self.read_output()
+        for hint in ("含证据引用", "baseline → target", "现有 / 需新增",
+                     "为什么对应根因", "本节定义上线后"):
+            self.assertNotIn(hint, text, f"填写说明泄漏: {hint}")
+        self.assertNotIn("<!--", text, "整行注释必须剥离")
+
+    def test_title_rendered_once_without_prefix_duplication(self):
+        proc = self.render()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        text = self.read_output()
+        self.assertTrue(text.startswith("# 合成 PRD:消息推送优化\n"),
+                        text[:60])
+        self.assertEqual(text.count("合成 PRD:消息推送优化"), 1,
+                         "标题不得重复(# PRD: {{title}} 前缀已去除)")
+
+    def test_incomplete_round_renders_back_to_new_bytes(self):
+        # 未完结轮重渲染字节变化属预期:旧版字节(带填写注释)被覆盖为新模板字节
+        self.assertEqual(self.render().returncode, 0)
+        new_bytes = self.read_output()
+        v1_style = new_bytes.replace(
+            "留存数据显示新用户次周流失集中在首周内。",
+            "留存数据显示新用户次周流失集中在首周内。（含证据引用）", 1)
+        (self.pm.root / "output" / "prd.md").write_text(v1_style, encoding="utf-8")
+        proc = self.render()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(self.read_output(), new_bytes)
+        self.assertIn("（含证据引用）", v1_style)  # 对照:旧字节确带注释
 
 
 if __name__ == "__main__":
