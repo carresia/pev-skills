@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV State (module-design)",
+  "type": "object",
+  "required": ["objective", "upstream_source", "upstream_kind", "mode", "status", "iteration", "max_iterations", "modules"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["INIT", "PLANNING", "EXECUTING", "VERIFYING", "COMPLETE", "WAITING_FOR_INPUT", "WAITING_FOR_UPSTREAM"]
+    },
+    "resume_to": {
+      "type": "string",
+      "description": "仅 status=WAITING_FOR_INPUT 时存在:被阻塞时所处的阶段,用户答复后回到该阶段(由 validate.py 强制)",
+      "enum": ["PLANNING", "EXECUTING", "VERIFYING"]
+    },
+    "mode": {
+      "type": "string",
+      "description": "本 skill 只有 design 场景;字段保留以与 PEV 家族状态机一致",
+      "enum": ["design"]
+    },
+    "upstream_source": {
+      "type": "string",
+      "description": "架构产物路径(优先 .pev/<轮次>/arch/output/,或用户提供的架构文档);引用不复制,溯源与打回都以它为准"
+    },
+    "upstream_kind": {
+      "type": "string",
+      "enum": ["architecture", "architecture_doc"]
+    },
+    "modules": {
+      "type": "array",
+      "description": "INIT 时确认的目标模块清单(深度与状态逐模块跟踪);变动须记 DECISION",
+      "items": {
+        "type": "object",
+        "required": ["id", "design_mode", "design_status", "review_status"],
+        "properties": {
+          "id": {"type": "string", "description": "架构模块 id,如 M1,与架构产物一致"},
+          "design_mode": {"type": "string", "enum": ["detail", "brief"], "description": "设计深度;变更 = 该模块设计失效重做"},
+          "design_status": {"type": "string", "enum": ["pending", "done"]},
+          "review_status": {"type": "string", "enum": ["pending", "pass", "revise"]}
+        }
+      }
+    },
+    "cross": {
+      "type": "object",
+      "description": "Cross 跨模块一致性评审状态;整体 status 停在 VERIFYING 直到 cross.status=passed",
+      "required": ["status"],
+      "properties": {
+        "status": {"type": "string", "enum": ["not_started", "passed", "revise_required"]}
+      }
+    },
+    "upstream_gaps": {
+      "type": "array",
+      "description": "用户选择回架构的缺口清单;仅 status=WAITING_FOR_UPSTREAM 时允许非空(由 validate.py 强制)",
+      "items": {
+        "type": "object",
+        "required": ["what", "upstream_anchor", "blocks"],
+        "properties": {
+          "what": {"type": "string", "description": "缺口内容:架构未定义/撑不住的边界问题(需新依赖/改所有权/exposes 不足)"},
+          "upstream_anchor": {"type": "string", "description": "缺口锚定的架构产物位置"},
+          "blocks": {"type": "string", "description": "哪些模块的设计因此无法产出"},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "required": ["goal"],
+      "properties": {
+        "goal": {"type": "string"},
+        "deadline": {"type": ["string", "null"]}
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Evidence Ledger",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type", "confidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "source": {
+            "type": "object",
+            "description": "可选:证据的可定位来源(文件+摘录+摘要)。存在时 validate.py 回读校验新鲜度。path 为项目根目录(含 .pev 的目录)相对路径,或绝对路径",
+            "required": ["path", "excerpt"],
+            "properties": {
+              "path": {"type": "string"},
+              "locator": {"type": "string"},
+              "excerpt": {"type": "string"},
+              "digest": {"type": "string", "description": "sha256:<64位hex> 或 pending"}
+            }
+          }
+        }
+      }
+    },
+    "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R9 对账)"},
+    "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R9 对账)"},
+    "iteration": {"type": "integer", "minimum": 0},
+    "max_iterations": {"type": "integer", "minimum": 1, "default": 5}
+  }
+}

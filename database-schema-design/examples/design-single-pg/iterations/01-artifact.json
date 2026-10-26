@@ -1,0 +1,154 @@
+{
+  "status": "completed",
+  "decisions": [
+    {"id": "d1", "decision": "订单主库选 PostgreSQL 16,单库写入"},
+    {"id": "d2", "decision": "主键用 BIGINT 自增"}
+  ],
+  "evidence": [
+    {
+      "claim": "上游声明 M1 拥有 orders 与 order_items 数据",
+      "type": "FACT",
+      "evidence": "module/output/M1/module-detail.md owned_data_handling 节",
+      "confidence": "high"
+    },
+    {
+      "claim": "主键 BIGINT 自增:单库写入,无分片计划",
+      "type": "DECISION",
+      "evidence": "01-artifact decisions#d2",
+      "confidence": "high"
+    },
+    {
+      "claim": "order_no 另设生成列而非用 PK 兜底,因为 PK 不含业务语义且交互 I1 幂等 required",
+      "type": "INFERENCE",
+      "evidence": "I1 幂等 required,消费者以 order_no 去重",
+      "confidence": "medium"
+    }
+  ],
+  "artifact": {
+    "deliverable_kind": "db_schemas",
+    "input_summary": {
+      "goal": "订单模块单库 schema",
+      "target_stores": ["D1"],
+      "upstream_snapshot": {
+        "modules": [
+          {
+            "id": "M1",
+            "name": "orders",
+            "exposes": ["创建订单", "查询订单"],
+            "owns_data": ["orders 订单", "order_items 订单明细"]
+          }
+        ],
+        "interactions": [
+          {
+            "id": "I1",
+            "scenario": "用户下单",
+            "from": "external:web",
+            "to": "M1",
+            "mode": "sync-call",
+            "idempotency": "required"
+          }
+        ]
+      },
+      "upstream_items": [
+        {"id": "M1-D1", "item": "orders 订单", "anchor": "module/output/M1/module-detail.md owned_data_handling 节"},
+        {"id": "M1-D2", "item": "order_items 订单明细", "anchor": "module/output/M1/module-detail.md owned_data_handling 节"},
+        {"id": "I1", "item": "用户下单", "anchor": "arch 关键交互表 I1 行"}
+      ]
+    },
+    "codebase_fit": {
+      "current_pattern": "无既有库,新库",
+      "reuse_conventions": [],
+      "do_not_break": [],
+      "tech_debt": [],
+      "known_bottlenecks": []
+    },
+    "stores": [
+      {
+        "id": "D1",
+        "name": "订单主库",
+        "kind": "postgresql",
+        "covered_entities": ["orders 订单", "order_items 订单明细"],
+        "environment": {
+          "dialect_version": "PostgreSQL 16",
+          "charset": "utf8",
+          "scale": "日增 50 万,峰值读写 10:1",
+          "retention": "订单保留 3 年,超期归档",
+          "multi_tenant": "无"
+        },
+        "access_patterns": [
+          {"id": "D1-A1", "pattern": "按买家查订单列表", "frequency": "高频", "query_shape": "WHERE buyer_id=? ORDER BY created_at DESC"},
+          {"id": "D1-A2", "pattern": "按订单号点查", "frequency": "高频", "query_shape": "WHERE order_no=?"},
+          {"id": "D1-A3", "pattern": "按订单查明细", "frequency": "中频", "query_shape": "WHERE order_id=?"}
+        ],
+        "tables": [
+          {
+            "id": "D1-T1",
+            "name": "orders",
+            "entity": "orders 订单",
+            "purpose": "订单主表",
+            "columns": "id BIGINT PK; order_no VARCHAR(32) UNIQUE NOT NULL; buyer_id BIGINT NOT NULL; amount DECIMAL(12,2) NOT NULL; status SMALLINT NOT NULL; created_at timestamptz NOT NULL",
+            "pk": "BIGINT 自增(单库写入,无分片计划)",
+            "constraints": "UNIQUE(order_no); CHECK status IN (0,1,2); 关键列 NOT NULL",
+            "why": "order_no 生成列承载业务语义,PK 不暴露",
+            "trace": "FACT module M1 owns_data"
+          },
+          {
+            "id": "D1-T2",
+            "name": "order_items",
+            "entity": "order_items 订单明细",
+            "purpose": "订单明细行",
+            "columns": "id BIGINT PK; order_id BIGINT NOT NULL; sku VARCHAR(64) NOT NULL; qty INT NOT NULL; price DECIMAL(12,2) NOT NULL",
+            "pk": "BIGINT 自增",
+            "constraints": "FK order_id→orders(id) ON DELETE CASCADE; qty NOT NULL",
+            "trace": "FACT module M1 owns_data"
+          }
+        ],
+        "indexes": [
+          {"id": "D1-I1", "table": "D1-T1", "definition": "INDEX (buyer_id, created_at DESC)", "serves": "D1-A1", "why": "买家维度列表排序"},
+          {"id": "D1-I2", "table": "D1-T1", "definition": "UNIQUE INDEX (order_no)", "serves": "D1-A2", "why": "订单号点查 + 幂等去重"},
+          {"id": "D1-I3", "table": "D1-T2", "definition": "INDEX (order_id)", "serves": "D1-A3", "why": "按订单查明细(FK 列手动建索引)"}
+        ],
+        "denormalization": [],
+        "data_flow_commitments": [
+          {"interaction": "I1", "role": "接收方", "schema_handling": "D1-I2 唯一索引(order_no)承接幂等去重", "trace": "FACT arch 交互 I1"}
+        ],
+        "evolution": {
+          "strategy": "expand-contract + Flyway 版本化",
+          "compat_rules": "删列/改类型/改约束视为破坏性变更,先双写一个版本周期;UP/DOWN 成对;大表变更评估锁级别",
+          "large_table_plan": "订单 3 年归档到 orders_archive;千万行后按 created_at RANGE 分区"
+        },
+        "tradeoffs": [
+          {
+            "decision": "主键自增 vs UUIDv7",
+            "choice": "BIGINT 自增",
+            "rationale": "单库写入,时间有序避免页分裂",
+            "cost": "跨库合并需映射表,且暴露业务量",
+            "alternative": "UUIDv7 BINARY(16)"
+          }
+        ],
+        "self_challenge": [
+          {"dimension": "failure_modes", "finding": "", "disposition": "none"},
+          {"dimension": "consistency", "finding": "", "disposition": "none"},
+          {"dimension": "concurrency", "finding": "重复提交同一下单请求会撞 order_no 唯一键", "disposition": "fixed"},
+          {"dimension": "boundary_erosion", "finding": "", "disposition": "none"},
+          {"dimension": "misuse_potential", "finding": "无 buyer_id 索引时列表查询会全表扫", "disposition": "fixed"},
+          {"dimension": "compatibility", "finding": "", "disposition": "none"},
+          {"dimension": "simpler_alternative", "finding": "", "disposition": "none"}
+        ]
+      }
+    ],
+    "risks": [],
+    "upstream_mapping": [
+      {"upstream_item": "M1-D1", "store_id": "D1", "trace": "orders 表"},
+      {"upstream_item": "M1-D2", "store_id": "D1", "trace": "order_items 表"},
+      {"upstream_item": "I1", "store_id": "D1", "trace": "D1-I2 唯一索引"}
+    ],
+    "downstream_deliverables": {
+      "incremental_implementation": ["orders/order_items 的 DDL 与约束清单"],
+      "test_driven_development": ["order_no 唯一约束与 status CHECK 约束的用例"],
+      "planning_and_task_breakdown": ["按表拆迁移任务"],
+      "documentation_and_adrs": ["主键选型 ADR"],
+      "c4_architecture": []
+    }
+  }
+}

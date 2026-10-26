@@ -1,0 +1,31 @@
+{
+  "goal": "按任务清单实施 PHASE-1 下单基础",
+  "understanding": "两条任务、线性依赖;仓库为 npm+vitest 的 TS 服务,基线全绿;单批次执行,批次末跑全量测试作为恢复点。",
+  "known": [
+    "基线:分支 main @ e4f5a6b,npm test 34 passed、npm run build 通过",
+    "上游结构化产物 2 条任务(TASK-1.1、TASK-1.2),依赖线性",
+    "测试命令 npm test,构建命令 npm run build"
+  ],
+  "unknown": [],
+  "assumptions": ["TASK-1.2 声明文件外的中间件改动按 deviations 处理,先做后报"],
+  "plan": [
+    {
+      "id": "step_1",
+      "objective": "确认基线与仓库现状,登记任务分母",
+      "action": "survey_context",
+      "inputs": ["tasks/iterations/01-artifact.json", "仓库:分支/测试/构建命令"],
+      "expected_output": "基线结论(分支/commit/检查结果)与 task_registry 转录",
+      "success_criteria": "基线全绿;registry 与上游任务集一致"
+    },
+    {
+      "id": "step_2",
+      "objective": "定执行批次与恢复点",
+      "action": "define_batches",
+      "inputs": ["task_registry", "依赖顺序"],
+      "expected_output": "单批次:TASK-1.1 → TASK-1.2,批次末 npm test + build 作为恢复点",
+      "success_criteria": "批次顺序不违反依赖;每任务一提交"
+    }
+  ],
+  "final_deliverable": "实施记录(baseline + registry + records)与仓库提交",
+  "stop_conditions": ["基线检查失败", "发现清单与仓库实况严重不符"]
+}

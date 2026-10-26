@@ -1,0 +1,66 @@
+{
+  "goal": "把 M1 订单模块的架构+契约+schema 拆为有序、可验证的实施任务清单",
+  "understanding": "上游三份产物粒度互补:架构给了模块边界与依赖方向,契约给了端点行为,schema 给了表结构。切片策略选纵切优先:PHASE-1 交付'可下单'端到端路径(表+API+页面),PHASE-2 交付查询;不采用'先全部数据层再全部接口层'的横切——集成风险会推到最后。代码库现状:空仓库无 migration 基建,需一条脚手架任务。",
+  "known": [
+    "架构模块表:M1 订单模块,依赖 M0 基础设施",
+    "契约 C3:POST /orders、GET /orders 两组端点及错误语义",
+    "schema:orders / order_items 两表已出 DDL",
+    "仓库为空,无 migration 基建、无测试基建"
+  ],
+  "unknown": [],
+  "assumptions": [
+    "下单页面为 Web 端(架构图唯一前端入口),无需 App 适配任务"
+  ],
+  "plan": [
+    {
+      "id": "step_1",
+      "objective": "勘察上游与代码库,确认切片策略与范围",
+      "action": "survey_context",
+      "inputs": ["arch_source", "aux_sources", "代码库现状"],
+      "expected_output": "切片策略(纵切优先)与范围结论,范围过大时的收敛项",
+      "success_criteria": "三份上游逐份读完,策略与理由写入 understanding"
+    },
+    {
+      "id": "step_2",
+      "objective": "登记上游工作项(覆盖对账分母)",
+      "action": "build_inventory",
+      "inputs": ["arch 模块表", "module exposes", "api 契约清单", "db 表清单"],
+      "expected_output": "inventory:各上游产物的工作项条目与溯源锚点,含工程支撑项",
+      "success_criteria": "上游逐份对账无漏登;工程支撑项有 DECISION/INFERENCE 锚点"
+    },
+    {
+      "id": "step_3",
+      "objective": "定阶段划分与检查点",
+      "action": "define_phases",
+      "inputs": ["inventory", "依赖图"],
+      "expected_output": "各 PHASE 的目标、终点检查点、是否人工 review",
+      "success_criteria": "每阶段终点系统处于可工作状态"
+    },
+    {
+      "id": "step_4",
+      "objective": "逐 PHASE 拆任务",
+      "action": "breakdown",
+      "inputs": ["PHASE 划分", "契约/schema 细节"],
+      "expected_output": "任务:规模档位、验收标准、验证命令、implements 落点、trace",
+      "success_criteria": "四档规模与文件数一致;验收标准可判定;条条可溯源"
+    },
+    {
+      "id": "step_5",
+      "objective": "依赖图与并行组",
+      "action": "map_dependencies",
+      "inputs": ["任务清单"],
+      "expected_output": "任务依赖 + 并行组划分",
+      "success_criteria": "无环、文档序=拓扑序;并行组内无依赖路径"
+    },
+    {
+      "id": "step_6",
+      "objective": "聚合预览,交独立评审",
+      "action": "draft",
+      "inputs": ["全部批次产物"],
+      "expected_output": "完整清单预览 + 精修循环",
+      "success_criteria": "用户 done 后 artifact status=completed,进入 VERIFYING"
+    }
+  ],
+  "final_deliverable": "output/task-plan.md(按 templates/task-plan.md 渲染)",
+  "stop_conditions": ["上游出现缺口且用户选择回上游", "迭代达到 max_iterations"]
+}

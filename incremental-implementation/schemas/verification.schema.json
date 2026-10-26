@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification",
+  "type": "object",
+  "required": ["verdict", "scores", "coverage", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]},
+    "scores": {
+      "type": "object",
+      "description": "7 维评分,维度与 rubrics/implementation-review.md 一致,各 1-5",
+      "required": ["coverage", "scope_discipline", "evidence_quality", "acceptance_alignment", "commit_discipline", "recoverability", "traceability"],
+      "properties": {
+        "coverage": {"type": "integer", "minimum": 1, "maximum": 5},
+        "scope_discipline": {"type": "integer", "minimum": 1, "maximum": 5},
+        "evidence_quality": {"type": "integer", "minimum": 1, "maximum": 5},
+        "acceptance_alignment": {"type": "integer", "minimum": 1, "maximum": 5},
+        "commit_discipline": {"type": "integer", "minimum": 1, "maximum": 5},
+        "recoverability": {"type": "integer", "minimum": 1, "maximum": 5},
+        "traceability": {"type": "integer", "minimum": 1, "maximum": 5}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "门禁数字,两个都必须照抄 validate.py 输出(R7 逐位比对):PASS 需要 task_execution_pct = 100 且 scope_violations = 0",
+      "required": ["task_execution_pct", "scope_violations"],
+      "properties": {
+        "task_execution_pct": {"type": "number", "minimum": 0, "maximum": 100, "description": "非延后任务的执行完成率(done/应做)"},
+        "scope_violations": {"type": "integer", "minimum": 0, "description": "实际改动落在声明文件与偏离声明之外的文件数"},
+        "notes": {"type": "string", "description": "对分母与偏离的质疑结论(registry 转录全吗?延后站得住吗?),不是自己算的数字"}
+      }
+    },
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["what", "why", "change"],
+        "properties": {
+          "what": {"type": "string", "description": "What is wrong"},
+          "why": {"type": "string", "description": "Why it matters"},
+          "change": {"type": "string", "description": "What must change"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+  }
+}

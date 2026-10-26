@@ -1,0 +1,51 @@
+{
+  "status": "completed",
+  "evidence": [
+    {"claim": "TASK-1.1 依据 orders 表 DDL", "type": "FACT",
+     "evidence": "db/output/D1/orders-schema.md orders", "confidence": "high"},
+    {"claim": "TASK-1.2 依据契约 C3 POST /orders", "type": "FACT",
+     "evidence": "api/output/D1/contracts.md C3", "confidence": "high"}
+  ],
+  "artifact": {
+    "inventory": [
+      {"id": "INV-1", "kind": "db_object", "title": "orders 表",
+       "anchor": "db/output/D1/orders-schema.md orders", "in_scope": true},
+      {"id": "INV-2", "kind": "api_contract", "title": "C3 订单契约",
+       "anchor": "api/output/D1/contracts.md C3", "in_scope": true}
+    ],
+    "phases": [
+      {
+        "id": "PHASE-1",
+        "title": "下单基础(可下单)",
+        "objective": "用户可完成下单",
+        "tasks": [
+          {
+            "id": "TASK-1.1",
+            "title": "建 orders 模型与仓储",
+            "description": "按 DDL 建 ORM 模型与仓储层,不做接口。",
+            "size": "XS",
+            "files_touched": ["src/orders/model.ts"],
+            "acceptance_criteria": ["模型字段与 DDL 一一对应"],
+            "verification": [{"how": "npm test -- --grep orders", "kind": "test"}],
+            "implements": ["INV-1"],
+            "dependencies": [],
+            "trace": "db/output/D1/orders-schema.md orders"
+          },
+          {
+            "id": "TASK-1.2",
+            "title": "实现 POST /orders 端点",
+            "description": "按契约 C3 实现创建订单端点,含 4xx 错误语义。",
+            "size": "S",
+            "files_touched": ["src/orders/router.ts", "test/orders.test.ts"],
+            "acceptance_criteria": ["201 返回订单体与契约 C3 一致", "空 title 返回 400"],
+            "verification": [{"how": "npm test -- --grep orders", "kind": "test"}],
+            "implements": ["INV-2"],
+            "dependencies": ["TASK-1.1"],
+            "trace": "api/output/D1/contracts.md C3"
+          }
+        ],
+        "checkpoint": {"checks": ["npm test 全绿"], "review_with_human": false}
+      }
+    ]
+  }
+}

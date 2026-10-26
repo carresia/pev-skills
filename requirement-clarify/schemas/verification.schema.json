@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification",
+  "type": "object",
+  "required": ["verdict", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]},
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["what", "why", "change"],
+        "properties": {
+          "what": {"type": "string", "description": "What is wrong"},
+          "why": {"type": "string", "description": "Why it matters"},
+          "change": {"type": "string", "description": "What must change"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+  }
+}

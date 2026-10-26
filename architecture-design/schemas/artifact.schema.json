@@ -1,0 +1,337 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "replan_required", "blocked"]
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "溯不到依据的产品级缺口;非空时 status 应为 blocked",
+      "items": {"type": "string"}
+    },
+    "decisions": {
+      "type": "array",
+      "description": "用户拍板与精修记录(含三选一结果),每条对应 Ledger 一条 DECISION",
+      "items": {
+        "type": "object",
+        "required": ["id", "decision"],
+        "properties": {
+          "id": {"type": "string", "description": "拍板锚点,如 d2;evidence 引用形如 01-artifact decisions#d2"},
+          "decision": {"type": "string"},
+          "context": {"type": "string"}
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "本迭代新增/修订的 Evidence Ledger 条目(与 state.evidence 同构)",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type", "confidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "source": {
+            "type": "object",
+            "description": "可选:证据的可定位来源(文件+摘录+摘要)。存在时 validate.py 回读校验新鲜度。path 为项目根目录(含 .pev 的目录)相对路径,或绝对路径",
+            "required": ["path", "excerpt"],
+            "properties": {
+              "path": {"type": "string"},
+              "locator": {"type": "string"},
+              "excerpt": {"type": "string"},
+              "digest": {"type": "string", "description": "sha256:<64位hex> 或 pending"}
+            }
+          }
+        }
+      }
+    },
+    "replan_reason": {
+      "type": "object",
+      "description": "status=replan_required/blocked 时必填(校验脚本强制)",
+      "properties": {
+        "problem": {"type": "string"},
+        "why_plan_invalid": {"type": "string"},
+        "new_information": {"type": "string"},
+        "recommended_replan": {"type": "string"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["deliverable_kind"],
+      "properties": {
+        "deliverable_kind": {
+          "type": "string",
+          "enum": ["architecture", "option_decision", "review_report"],
+          "description": "与 state.mode 对应:design→architecture,choose→option_decision,review→review_report;各 kind 必填块由 validate.py 强制"
+        },
+        "input_summary": {
+          "type": "object",
+          "description": "survey_upstream 产出:架构输入摘要",
+          "properties": {
+            "goal": {"type": "string"},
+            "scope": {"type": "string"},
+            "nfrs": {"type": "array", "items": {"type": "string"}},
+            "constraints": {"type": "array", "items": {"type": "string"}},
+            "scale_assumptions": {"type": "array", "items": {"type": "string"}},
+            "upstream_items": {
+              "type": "array",
+              "description": "从上游提炼的 In Scope 条目清单(覆盖检查的分母);声明漏项会被 Verifier 打回",
+              "items": {
+                "type": "object",
+                "required": ["id", "item", "anchor"],
+                "properties": {
+                  "id": {"type": "string", "description": "如 U1"},
+                  "item": {"type": "string"},
+                  "anchor": {"type": "string", "description": "上游锚点,如 catalog.md §Epic1/F2"}
+                }
+              }
+            }
+          }
+        },
+        "codebase_fit": {
+          "type": "object",
+          "description": "survey_codebase 产出(仅现有库):当前模式/可复用约定/勿破坏边界/技术债/已知瓶颈",
+          "properties": {
+            "current_pattern": {"type": "string"},
+            "reuse_conventions": {"type": "array", "items": {"type": "string"}},
+            "do_not_break": {"type": "array", "items": {"type": "string"}},
+            "tech_debt": {"type": "array", "items": {"type": "string"}},
+            "known_bottlenecks": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "style": {
+          "type": "object",
+          "description": "架构风格决策(architecture kind 必填,validate.py 查字段非空)",
+          "properties": {
+            "choice": {"type": "string"},
+            "rationale": {"type": "string"},
+            "rejected_simpler": {"type": "string", "description": "为什么不用更简单的"},
+            "rejected_complexer": {"type": "string", "description": "为什么不用更复杂的"}
+          }
+        },
+        "boundaries": {
+          "type": "object",
+          "description": "系统边界(结构自由,Verifier 审质量)",
+          "properties": {
+            "system_in": {"type": "array", "items": {"type": "string"}},
+            "system_out": {"type": "array", "items": {"type": "string"}},
+            "external_deps": {"type": "array", "items": {"type": "string"}},
+            "trust_boundaries": {"type": "array", "items": {"type": "string"}},
+            "deployment_units": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "c4_mapping": {
+          "type": "object",
+          "description": "C4 映射:至少 Context+Container;Component/Deployment 仅当影响实现/决策",
+          "properties": {
+            "context": {"type": "string"},
+            "containers": {"type": "string"},
+            "component_needed": {"type": "string"},
+            "deployment_needed": {"type": "string"}
+          }
+        },
+        "modules": {
+          "type": "array",
+          "description": "模块划分(architecture kind 必填);depends_on 引用必须存在且全图无环(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "responsibility", "depends_on"],
+            "properties": {
+              "id": {"type": "string", "description": "如 M1"},
+              "name": {"type": "string"},
+              "responsibility": {"type": "string"},
+              "owns_data": {"type": "array", "items": {"type": "string"}, "description": "与 data_ownership 表双向一致(validate.py 强制)"},
+              "exposes": {"type": "array", "items": {"type": "string"}},
+              "depends_on": {"type": "array", "items": {"type": "string"}},
+              "not_responsible": {"type": "array", "items": {"type": "string"}},
+              "trace": {"type": "string", "description": "溯源:FACT/DECISION/INFERENCE + 锚点"}
+            }
+          }
+        },
+        "interactions": {
+          "type": "array",
+          "description": "关键交互(架构级,非完整 API);from/to 为模块 id 或 external:<名称> 前缀",
+          "items": {
+            "type": "object",
+            "required": ["scenario", "from", "to", "mode"],
+            "properties": {
+              "scenario": {"type": "string"},
+              "from": {"type": "string"},
+              "to": {"type": "string"},
+              "mode": {"type": "string", "description": "sync-call | async-message | data-flow 等"},
+              "consistency": {"type": "string"},
+              "failure_handling": {"type": "string"},
+              "idempotency": {"type": "string"}
+            }
+          }
+        },
+        "data_ownership": {
+          "type": "array",
+          "description": "数据所有权(architecture kind 必填);owner 唯一、引用合法、与 owns_data 一致(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["data", "owner"],
+            "properties": {
+              "data": {"type": "string"},
+              "owner": {"type": "string", "description": "模块 id;同一数据不得出现两个不同 owner(validate.py 强制)"},
+              "readers": {"type": "array", "items": {"type": "string"}},
+              "writers": {"type": "array", "items": {"type": "string"}, "description": "含 owner;出现非 owner 写方时 Verifier 必须质询"},
+              "consistency": {"type": "string"}
+            }
+          }
+        },
+        "tradeoffs": {
+          "type": "array",
+          "description": "关键取舍(architecture/option_decision kind 必填);cost 非空(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["decision", "choice", "rationale", "cost"],
+            "properties": {
+              "id": {"type": "string", "description": "如 T1"},
+              "decision": {"type": "string"},
+              "choice": {"type": "string"},
+              "rationale": {"type": "string"},
+              "cost": {"type": "string", "description": "放弃的东西;必须具体,不接受空话(validate.py 查非空)"},
+              "alternative": {"type": "string"}
+            }
+          }
+        },
+        "self_challenge": {
+          "type": "array",
+          "description": "提交前的 7 维自查(architecture kind 必填);7 维全齐、发现全处置(validate.py 强制)。自查不替代 Verifier 独立评审",
+          "items": {
+            "type": "object",
+            "required": ["dimension", "finding", "disposition"],
+            "properties": {
+              "dimension": {
+                "type": "string",
+                "enum": ["failure_modes", "consistency", "concurrency", "boundary_erosion", "migration_rollback", "scale_cliff", "simpler_alternative"]
+              },
+              "finding": {"type": "string", "description": "空字符串 = 该维无发现"},
+              "disposition": {"type": "string", "enum": ["none", "fixed", "accepted_risk"], "description": "finding 为空时只能 none;非空时只能 fixed 或 accepted_risk"},
+              "rationale": {"type": "string", "description": "accepted_risk 时必填(validate.py 强制)"}
+            }
+          }
+        },
+        "ops_constraints": {
+          "type": "object",
+          "description": "运行与演进约束:部署/监控告警/备份恢复/回滚/容量增长(结构自由,Verifier 审)",
+          "properties": {
+            "deployment": {"type": "string"},
+            "monitoring_alerting": {"type": "string"},
+            "backup_restore": {"type": "string"},
+            "rollback": {"type": "string"},
+            "capacity_growth": {"type": "string"}
+          }
+        },
+        "risks": {
+          "type": "array",
+          "description": "接受的风险:对抗审查中存活且明确接受的部分",
+          "items": {
+            "type": "object",
+            "required": ["risk", "impact", "mitigation"],
+            "properties": {
+              "id": {"type": "string"},
+              "risk": {"type": "string"},
+              "impact": {"type": "string"},
+              "mitigation": {"type": "string"},
+              "to_validate": {"type": "string"}
+            }
+          }
+        },
+        "upstream_mapping": {
+          "type": "array",
+          "description": "上游条目 → 架构落点(architecture/option_decision kind 必填);与 upstream_items 双向对账(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["upstream_item", "module_id", "trace"],
+            "properties": {
+              "upstream_item": {"type": "string", "description": "upstream_items 的 id,如 U1"},
+              "module_id": {"type": "string", "description": "承载它的模块 id(choose kind 可填选项 id)"},
+              "trace": {"type": "string"}
+            }
+          }
+        },
+        "downstream_deliverables": {
+          "type": "object",
+          "description": "给下游 skills 的输入清单(architecture kind 应填,Verifier 审完整性)",
+          "properties": {
+            "api_and_interface_design": {"type": "array", "items": {"type": "string"}},
+            "database_schema_design": {"type": "array", "items": {"type": "string"}},
+            "c4_architecture": {"type": "array", "items": {"type": "string"}},
+            "documentation_and_adrs": {"type": "array", "items": {"type": "string"}},
+            "planning_and_task_breakdown": {"type": "array", "items": {"type": "string"}},
+            "test_driven_development": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "options": {
+          "type": "array",
+          "description": "候选方案(option_decision kind 必填);≥2 且逐候选 cost 非空(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "summary", "cost"],
+            "properties": {
+              "id": {"type": "string", "description": "如 O1"},
+              "name": {"type": "string"},
+              "summary": {"type": "string"},
+              "fit": {"type": "string", "description": "对上游需求/非功能性需求(NFR)的契合点"},
+              "cost": {"type": "string", "description": "真实代价:放弃什么、增加什么复杂度"},
+              "complexity": {"type": "string"},
+              "risks": {"type": "array", "items": {"type": "string"}},
+              "evidence_refs": {"type": "array", "items": {"type": "string"}, "description": "支撑该候选判断的 Ledger 锚点"}
+            }
+          }
+        },
+        "evaluation": {
+          "type": "array",
+          "description": "评估矩阵(option_decision kind 必填);每维覆盖全部候选(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["criterion", "scores"],
+            "properties": {
+              "criterion": {"type": "string", "description": "评估维度,应锚定上游 NFR/约束"},
+              "scores": {"type": "object", "description": "候选 id → 1-5 分"},
+              "weight": {"type": "string"},
+              "rationale": {"type": "string"}
+            }
+          }
+        },
+        "recommendation": {
+          "type": "object",
+          "description": "推荐(option_decision kind 必填);指向存在的候选 id(validate.py 强制)",
+          "properties": {
+            "option_id": {"type": "string"},
+            "rationale": {"type": "string"},
+            "conditions": {"type": "string", "description": "推荐何时失效/应重新选型的条件"},
+            "rejected_because": {"type": "object", "description": "各落选候选的一句话否决理由"}
+          }
+        },
+        "review_findings": {
+          "type": "array",
+          "description": "评审发现(review_report kind 必填);对抗 7 维全齐、发现带 severity+锚点(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["dimension", "finding", "severity"],
+            "properties": {
+              "id": {"type": "string", "description": "如 F1"},
+              "dimension": {
+                "type": "string",
+                "enum": ["failure_modes", "consistency", "concurrency", "boundary_erosion", "migration_rollback", "scale_cliff", "simpler_alternative"]
+              },
+              "finding": {"type": "string", "description": "空字符串 = 该维无发现(仍须占位,证明扫过)"},
+              "severity": {"type": "string", "enum": ["NONE", "LOW", "MEDIUM", "HIGH", "BLOCKING"], "description": "finding 为空时只能 NONE"},
+              "evidence_anchor": {"type": "string", "description": "设计文档中的位置/引用,非空 finding 必填(validate.py 强制)"},
+              "recommendation": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

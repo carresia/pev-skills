@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification (module-design)",
+  "type": "object",
+  "required": ["verdict", "scores", "module_reviews", "cross_review", "gates", "confidence"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]
+    },
+    "scores": {
+      "type": "object",
+      "description": "整体 7 维各 1-5 分(逐模块评分见 module_reviews),判据见 rubrics/module-review.md",
+      "required": ["architecture_conformance", "internal_clarity", "information_hiding", "tradeoff_honesty", "dfx_readiness", "simplicity", "traceability"],
+      "properties": {
+        "architecture_conformance": {"type": "integer", "minimum": 1, "maximum": 5},
+        "internal_clarity": {"type": "integer", "minimum": 1, "maximum": 5},
+        "information_hiding": {"type": "integer", "minimum": 1, "maximum": 5},
+        "tradeoff_honesty": {"type": "integer", "minimum": 1, "maximum": 5},
+        "dfx_readiness": {"type": "integer", "minimum": 1, "maximum": 5},
+        "simplicity": {"type": "integer", "minimum": 1, "maximum": 5},
+        "traceability": {"type": "integer", "minimum": 1, "maximum": 5}
+      }
+    },
+    "module_reviews": {
+      "type": "array",
+      "description": "逐模块评审结论;PASS 要求全部 verdict=PASS 且覆盖全部目标模块(validate.py 强制)",
+      "items": {
+        "type": "object",
+        "required": ["module_id", "verdict", "scores"],
+        "properties": {
+          "module_id": {"type": "string", "description": "必须 ⊆ artifact 设计过的模块 id(validate.py 强制)"},
+          "verdict": {"type": "string", "enum": ["PASS", "REVISE"]},
+          "scores": {
+            "type": "object",
+            "required": ["architecture_conformance", "internal_clarity", "information_hiding", "tradeoff_honesty", "dfx_readiness", "simplicity", "traceability"],
+            "properties": {
+              "architecture_conformance": {"type": "integer", "minimum": 1, "maximum": 5},
+              "internal_clarity": {"type": "integer", "minimum": 1, "maximum": 5},
+              "information_hiding": {"type": "integer", "minimum": 1, "maximum": 5},
+              "tradeoff_honesty": {"type": "integer", "minimum": 1, "maximum": 5},
+              "dfx_readiness": {"type": "integer", "minimum": 1, "maximum": 5},
+              "simplicity": {"type": "integer", "minimum": 1, "maximum": 5},
+              "traceability": {"type": "integer", "minimum": 1, "maximum": 5}
+            }
+          },
+          "critical_issues": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "cross_review": {
+      "type": "object",
+      "description": "Cross 跨模块一致性评审(全部模块 PASS 后执行);verdict=revise 时整体不得 PASS(validate.py 强制)",
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {"type": "string", "enum": ["pass", "revise"]},
+        "checked_interactions": {"type": "array", "items": {"type": "string"}, "description": "核查过的架构交互 id"},
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "severity", "what", "why", "what_must_change", "affected_modules"],
+            "properties": {
+              "id": {"type": "string", "description": "如 X1"},
+              "severity": {"type": "string", "enum": ["BLOCKING", "HIGH", "MEDIUM", "LOW"]},
+              "what": {"type": "string"},
+              "why": {"type": "string"},
+              "what_must_change": {"type": "string"},
+              "affected_modules": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+            }
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "五个门禁布尔照抄 validate.py 打印的值(逐位比对;不适用时脚本按 true 计并注明)",
+      "required": ["modules_complete", "deps_within_architecture", "upstream_mapped", "findings_disposed", "cross_consistent", "notes"],
+      "properties": {
+        "modules_complete": {"type": "boolean"},
+        "deps_within_architecture": {"type": "boolean"},
+        "upstream_mapped": {"type": "boolean"},
+        "findings_disposed": {"type": "boolean"},
+        "cross_consistent": {"type": "boolean"},
+        "notes": {"type": "string", "description": "对五值的质疑与补充(如:结构守恒但快照疑似漏抄 exposes,交 architecture_conformance 维度扣分)"}
+      }
+    },
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "description": "verdict != PASS 时每条写清 What is wrong / Why it matters / What must change",
+      "items": {"type": "string"}
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "findings": {
+      "type": "array",
+      "description": "结构化评审发现(反向追溯):每条携带 affected_upstream_items 回指声明过的模块职责/暴露条目,便于 REVISE 精确定位",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "what", "why", "what_must_change", "affected_upstream_items"],
+        "properties": {
+          "id": {"type": "string"},
+          "severity": {"type": "string", "enum": ["BLOCKING", "HIGH", "MEDIUM", "LOW"]},
+          "what": {"type": "string"},
+          "why": {"type": "string"},
+          "what_must_change": {"type": "string"},
+          "affected_upstream_items": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+          "dimension": {"type": "string"},
+          "module_id": {"type": "string", "description": "可选:发现归属的模块"}
+        }
+      }
+    },
+    "redlines": {
+      "type": "array",
+      "description": "红线处置(独立于 7 维评分):每条红线 id 来自 redlines/module-redlines.json;applies=true 且 passed=false 时不得判 PASS",
+      "items": {
+        "type": "object",
+        "required": ["id", "applies", "details"],
+        "properties": {
+          "id": {"type": "string"},
+          "applies": {"type": "boolean"},
+          "passed": {"type": "boolean"},
+          "details": {"type": "string"}
+        }
+      }
+    },
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+  }
+}

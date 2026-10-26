@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {"type": "string", "enum": ["completed", "replan_required", "blocked"]},
+    "replan_reason": {
+      "type": "object",
+      "description": "status 为 replan_required / blocked 时必须至少填写一个非空字段(由 validate.py R2 强制)",
+      "properties": {
+        "problem": {"type": ["string", "null"]},
+        "why_invalid": {"type": ["string", "null"]},
+        "new_information": {"type": ["string", "null"]},
+        "recommended": {"type": ["string", "null"]}
+      }
+    },
+    "answers": {
+      "type": "array",
+      "description": "已闭环问题的答案",
+      "items": {
+        "type": "object",
+        "required": ["question", "answer", "source"],
+        "properties": {
+          "question": {"type": "string"},
+          "answer": {"type": "string"},
+          "source": {"type": "string", "description": "答案来源:PRD §x / .pev/<轮次>/pm/ 产物 / 代码文件 / DECISION 澄清记录锚点"}
+        }
+      }
+    },
+    "decisions": {"type": "array", "items": {"type": "object"}, "description": "human 直接拍板的决定(同步记入 Evidence Ledger,type=DECISION)"},
+    "unresolved": {"type": "array", "items": {"type": "object"}, "description": "追踪不到且尚未获得 human 答复的问题"},
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": ["string", "null"], "enum": ["high", "medium", "low", null]}
+        }
+      }
+    },
+    "artifact": {"type": "object", "description": "面向交付物(Spec)的正文结构,由 templates/ 渲染"}
+  }
+}

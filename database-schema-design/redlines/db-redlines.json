@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "description": "数据库 schema 设计红线库(机制骨架):Verifier 在 verification.redlines 逐条处置,适用(applies=true)且未通过(passed=false)时不得判 PASS。红线独立于 7 维评分,不可被分数抵消。可插拔:项目/组织可按需增删条目,id 需唯一且稳定。",
+  "redlines": [
+    {
+      "id": "RED-01",
+      "title": "实体守恒:承载的数据不越上游声明",
+      "category": "conformance",
+      "applies_when": "存在 schema 设计(恒适用)",
+      "check": "covered_entities 每条 ∈ 上游快照(任一模块)的 owns_data;表条条回指实体;有无存上游没声明的数据、跨模块直连他表或私挪数据所有权",
+      "pass_criterion": "实体与数据流全部守恒且无越界;要存新数据的需求已走三选一,不在 schema 层私自解决",
+      "fail_example": "订单库的 schema 里出现 user_profiles 表,上游任何模块都没声明把用户资料数据给它"
+    },
+    {
+      "id": "RED-02",
+      "title": "止于 schema:不做上下游的活",
+      "category": "scope",
+      "applies_when": "存在 schema 设计(恒适用)",
+      "check": "产物中是否出现持久层业务代码、查询实现、测试代码、文件级任务列表;是否重新定义模块边界/数据所有权",
+      "pass_criterion": "止于 schema(结构+约束+索引+演进策略);实现与任务拆解只进 downstream_deliverables;数据归属以上游声明为准未改动",
+      "fail_example": "schema 产物里写出 Repository 类的 CRUD 方法实现和 JPA 注解"
+    },
+    {
+      "id": "RED-03",
+      "title": "金额与精确值不用浮点类型",
+      "category": "data_integrity",
+      "applies_when": "存在金额/费率/积分等精确数值列(schema_request 或上游声明涉及交易/计费时恒适用)",
+      "check": "逐列扫:金额是否用 FLOAT/DOUBLE;是否用 DECIMAL/NUMERIC 或整数最小货币单位(分)",
+      "pass_criterion": "全部精确值列用 DECIMAL/NUMERIC 或整数最小单位;无浮点存钱",
+      "fail_example": "order.amount DECIMAL 没定,却给 discount_rate FLOAT、total DOUBLE"
+    },
+    {
+      "id": "RED-04",
+      "title": "MySQL 字符集必须 utf8mb4",
+      "category": "dialect",
+      "applies_when": "kind=mysql 的库(恒适用)",
+      "check": "MySQL 库的 environment.charset 与表定义是否 utf8mb4;有无 utf8(3 字节阉割版)/latin1",
+      "pass_criterion": "库/表/列字符集全部显式 utf8mb4(或继承 utf8mb4 库默认);无 utf8/latin1",
+      "fail_example": "CREATE TABLE ... DEFAULT CHARSET=utf8,存 emoji 直接报错"
+    },
+    {
+      "id": "RED-05",
+      "title": "索引与 denorm 必须有依据",
+      "category": "justification",
+      "applies_when": "存在 schema 设计(恒适用)",
+      "check": "每个二级索引/denorm 的 serves 是否回指声明的 access pattern;有无「以防万一」索引、无对应查询的冗余列",
+      "pass_criterion": "条条有依据、回指成立;无依据的索引/denorm 已删除或其 access pattern 已补声明并经得起追问",
+      "fail_example": "给 status 列单列建了索引,但没有任何声明的查询按 status 过滤"
+    },
+    {
+      "id": "RED-06",
+      "title": "演进与迁移交代:可回滚、锁影响评估",
+      "category": "compatibility",
+      "applies_when": "存在 schema 设计(恒适用)",
+      "check": "是否有 evolution(策略+什么算破坏性变更);改已有表是否 UP+DOWN 成对、评估锁影响(MySQL online DDL / PG 锁级别),有无裸 ALTER 大表",
+      "pass_criterion": "演进策略具体;变更有回滚路径;锁影响有交代;大表变更走 online/分批方案",
+      "fail_example": "对 2 亿行的表直接 ALTER TABLE ADD COLUMN,没评估锁也没写 DOWN"
+    },
+    {
+      "id": "RED-07",
+      "title": "完整性约束进数据库",
+      "category": "data_integrity",
+      "applies_when": "存在 schema 设计(恒适用)",
+      "check": "关系是否有 FK + 明确 ON DELETE;业务键是否 UNIQUE;枚举列是否有约束(enum/CHECK/lookup);必填列是否 NOT NULL;PG 的 FK 列是否有索引",
+      "pass_criterion": "能进库的约束全部进库;不进库的逐条写明理由(如高频写性能)并记 accepted_risk,而非默认省略",
+      "fail_example": "order.user_id 只在应用层校验存在性,库里无 FK,旁路写入造出孤儿订单"
+    }
+  ]
+}

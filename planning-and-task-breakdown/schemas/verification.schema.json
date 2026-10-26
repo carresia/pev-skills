@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification",
+  "type": "object",
+  "required": ["verdict", "scores", "coverage", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]},
+    "scores": {
+      "type": "object",
+      "description": "7 维评分,维度与 rubrics/breakdown-review.md 一致,各 1-5",
+      "required": ["coverage", "granularity", "ordering", "verifiability", "parallelization", "checkpoints", "traceability"],
+      "properties": {
+        "coverage": {"type": "integer", "minimum": 1, "maximum": 5},
+        "granularity": {"type": "integer", "minimum": 1, "maximum": 5},
+        "ordering": {"type": "integer", "minimum": 1, "maximum": 5},
+        "verifiability": {"type": "integer", "minimum": 1, "maximum": 5},
+        "parallelization": {"type": "integer", "minimum": 1, "maximum": 5},
+        "checkpoints": {"type": "integer", "minimum": 1, "maximum": 5},
+        "traceability": {"type": "integer", "minimum": 1, "maximum": 5}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "门禁数字,PASS 需要 upstream_coverage_pct = 100(范围内工作项条条有任务落点)",
+      "required": ["upstream_coverage_pct"],
+      "properties": {
+        "upstream_coverage_pct": {"type": "number", "minimum": 0, "maximum": 100, "description": "范围内上游工作项的任务落点覆盖率"},
+        "notes": {"type": "string", "description": "计算口径与未覆盖项说明"}
+      }
+    },
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["what", "why", "change"],
+        "properties": {
+          "what": {"type": "string", "description": "What is wrong"},
+          "why": {"type": "string", "description": "Why it matters"},
+          "change": {"type": "string", "description": "What must change"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+  }
+}

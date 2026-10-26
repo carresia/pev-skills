@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV State",
+  "type": "object",
+  "required": ["objective", "spec_source", "status", "iteration", "max_iterations"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["INIT", "PLANNING", "EXECUTING", "VERIFYING", "COMPLETE", "WAITING_FOR_INPUT", "WAITING_FOR_SPEC"]
+    },
+    "resume_to": {
+      "type": "string",
+      "description": "仅 status=WAITING_FOR_INPUT 时存在:被阻塞时所处的阶段,用户答复后回到该阶段(由 validate.py 强制)",
+      "enum": ["PLANNING", "EXECUTING", "VERIFYING"]
+    },
+    "spec_source": {
+      "type": "string",
+      "description": "上游文件路径(优先 .pev/<轮次>/rc/output/spec.md,或用户直接提供的已批准 PRD);引用不复制,溯源与打回都以它为准"
+    },
+    "spec_gaps": {
+      "type": "array",
+      "description": "用户选择回上游的缺口清单;仅 status=WAITING_FOR_SPEC 时允许非空(由 validate.py 强制)",
+      "items": {
+        "type": "object",
+        "required": ["what", "spec_anchor", "blocks"],
+        "properties": {
+          "what": {"type": "string", "description": "缺口内容:上游未定义/自相矛盾的产品行为"},
+          "spec_anchor": {"type": "string", "description": "缺口锚定的上游章节/位置"},
+          "blocks": {"type": "string", "description": "哪些 story/scenario 因此无法产出"},
+          "why": {"type": "string"}
+        }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "required": ["goal"],
+      "properties": {
+        "goal": {"type": "string"},
+        "deadline": {"type": ["string", "null"]}
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Evidence Ledger",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type", "confidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R9 对账)"},
+    "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R9 对账)"},
+    "iteration": {"type": "integer", "minimum": 0},
+    "max_iterations": {"type": "integer", "minimum": 1, "default": 5}
+  }
+}

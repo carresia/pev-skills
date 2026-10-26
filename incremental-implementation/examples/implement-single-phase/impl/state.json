@@ -1,0 +1,16 @@
+{
+  "objective": {"goal": "按任务清单实施 PHASE-1 下单基础"},
+  "plan_source": "tasks/output/task-plan.md",
+  "aux_sources": [
+    {"kind": "db_schema", "path": "db/output/D1/orders-schema.md"},
+    {"kind": "api_contract", "path": "api/output/D1/contracts.md"}
+  ],
+  "vcs": "git",
+  "mode": "implement",
+  "status": "COMPLETE",
+  "iteration": 1,
+  "max_iterations": 5,
+  "plans": ["01-plan.json"],
+  "artifacts": ["01-artifact.json"],
+  "evidence": []
+}

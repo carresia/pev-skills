@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact(实施记录)",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {"type": "string", "enum": ["completed", "replan_required", "blocked"]},
+    "replan_reason": {
+      "type": "object",
+      "description": "status 为 replan_required / blocked 时必填(由 validate.py 强制)",
+      "properties": {
+        "problem": {"type": "string"},
+        "why_invalid": {"type": "string"},
+        "new_information": {"type": "string"},
+        "recommended": {"type": "string"}
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "任务清单本身的错或设计依据缺口,待用户三选一(①回 planning-and-task-breakdown 改清单 ②回对应设计 skill ③直接拍板记 DECISION)",
+      "items": {
+        "type": "object",
+        "required": ["what", "blocks"],
+        "properties": {
+          "what": {"type": "string", "description": "清单漏任务/依赖失实/files_touched 严重不符,或实现依据在设计产物里找不到"},
+          "upstream_anchor": {"type": "string", "description": "缺口锚定的清单/设计位置及该回的 skill(能定位就填)"},
+          "blocks": {"type": "string", "description": "哪些任务因此无法正确执行"},
+          "why": {"type": "string"},
+          "recommended": {"type": "string", "description": "推荐答案(供用户拍板参考,不是默认值)"}
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "human 拍板决定(范围偏离批准、任务延后、批次调整),同步记入 Evidence Ledger(type=DECISION)"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "description": "实施记录正文(基线 + 任务分母 + 逐任务执行记录),由 templates/implementation-report.md 渲染",
+      "required": ["baseline", "task_registry", "task_records"],
+      "properties": {
+        "baseline": {
+          "type": "object",
+          "description": "开工前基线:基线挂了(测试本来就红)不许开工——分不清是你改坏的还是本来就坏",
+          "required": ["branch", "commit", "checks"],
+          "properties": {
+            "branch": {"type": "string"},
+            "commit": {"type": "string", "description": "开工前的 commit;无版本控制仓库填 \"none\""},
+            "checks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["what", "result"],
+                "properties": {
+                  "what": {"type": "string", "description": "基线检查命令,如 npm test / npm run build"},
+                  "result": {"type": "string", "enum": ["pass", "fail"]}
+                }
+              }
+            }
+          }
+        },
+        "task_registry": {
+          "type": "array",
+          "minItems": 1,
+          "description": "任务分母(覆盖对账分母):从上游结构化产物转录,或从用户清单转录(须 DECISION 锚点)。第一个 artifact 定一次,迭代间不变;分母变更(增删任务、deferred 翻转、换 files_touched/acceptance_criteria)须在新迭代 Evidence Ledger 记 DECISION(validate.py R9 强制)——漏做任务就改分母是作弊",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "files_touched", "acceptance_criteria", "trace"],
+            "properties": {
+              "id": {"type": "string", "description": "沿用上游任务 id(TASK-x.y);外部清单自编时保持稳定"},
+              "title": {"type": "string"},
+              "files_touched": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "上游声明的预计改动文件——范围纪律的比对基准"},
+              "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "上游声明的验收标准,逐条对照"},
+              "dependencies": {"type": "array", "items": {"type": "string"}},
+              "trace": {"type": "string", "description": "溯源:上游任务清单位置(FACT)或转录/拍板锚点(DECISION)"},
+              "deferred": {"type": "boolean", "description": "默认 false。置 true = 本轮不做,note 必须写理由(validate.py 强制),不计入覆盖分母"},
+              "note": {"type": "string", "description": "deferred=true 时必填:为什么延后、谁拍的、后续怎么接"}
+            }
+          }
+        },
+        "task_records": {
+          "type": "array",
+          "description": "逐任务执行记录。执行到哪记到哪,未执行的任务不出现(覆盖对账由 validate.py 算)",
+          "items": {
+            "type": "object",
+            "required": ["id", "status", "files_changed", "tests", "acceptance_results"],
+            "properties": {
+              "id": {"type": "string", "description": "必须出现在 task_registry 中(validate.py 强制)"},
+              "status": {"type": "string", "enum": ["done", "failed", "deferred"]},
+              "commits": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "本任务产生的 commit 哈希(可多个);state.vcs=git 且 status=done 时必须非空(validate.py 强制)"
+              },
+              "files_changed": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"},
+                "description": "实际改动的文件。必须 ⊆ 上游声明 files_touched ∪ deviations(validate.py 强制——范围纪律)"
+              },
+              "deviations": {
+                "type": "array",
+                "description": "范围偏离声明:动了声明清单之外的文件,逐条写明为什么",
+                "items": {
+                  "type": "object",
+                  "required": ["path", "why"],
+                  "properties": {
+                    "path": {"type": "string"},
+                    "why": {"type": "string", "description": "为什么必须动这个文件(非空,validate.py 强制);用户批准过的记 DECISION 锚点"}
+                  }
+                }
+              },
+              "tests": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["how", "kind", "result", "evidence"],
+                  "properties": {
+                    "how": {"type": "string", "description": "真跑过的命令或操作,如 npm test -- --grep orders"},
+                    "kind": {"type": "string", "enum": ["test", "build", "lint", "typecheck", "manual"]},
+                    "result": {"type": "string", "enum": ["pass", "fail"]},
+                    "evidence": {"type": "string", "description": "输出摘要/关键行,非空(validate.py 强制)——\"全绿\"两个字不算证据,要有可查的输出内容或 commit 内含测试"}
+                  }
+                },
+                "description": "status=done 时至少一条 result=pass 且 evidence 非空(validate.py 强制);先红后绿的 TDD 顺序在 guides/implementation-flow.md 约束"
+              },
+              "acceptance_results": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["criterion", "met", "evidence"],
+                  "properties": {
+                    "criterion": {"type": "string", "description": "必须与 registry 中该任务的验收标准逐字对应(validate.py 集合比对)"},
+                    "met": {"type": "boolean"},
+                    "evidence": {"type": "string", "description": "对照依据:测试输出/命令结果/commit,非空"}
+                  }
+                },
+                "description": "验收逐条对照;status=done 时必须与 registry 验收集合完全一致且全部 met=true(validate.py 强制)"
+              },
+              "note": {"type": "string", "description": "status=failed/deferred 时必填:失败原因/延后理由与下一步(validate.py 强制)"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }

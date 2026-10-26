@@ -1,0 +1,646 @@
+"""生命周期脚本测试:init / commit / transition(design.md"流程脚本与写入权")。
+
+先于实现编写(RED)。场景对应 design.md"交接链路与验收场景"表的全部行;
+另含调用预算断言与协议输出断言(成功/失败/幂等重跑三类)。
+运行(skill 根目录): python3 -m unittest discover -s tests -t . -v
+"""
+
+import json
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+
+from tests import helpers as h
+
+
+class LifecycleBase(unittest.TestCase):
+    """每个用例一个独立 workspace;init.py 在其中建 .pev/prd-<日期>/pm/。"""
+
+    def setUp(self):
+        self.ws = Path(tempfile.mkdtemp(prefix="nana-lc-"))
+        self.addCleanup(shutil.rmtree, self.ws, ignore_errors=True)
+        self.calls = []
+
+    def call(self, script, *args):
+        self.calls.append(script)
+        return h.run_script(script, *args)
+
+    def run_next(self, payload, *extra):
+        """执行 payload['next'] 中第一条 command 类指令,返回其结果。"""
+        nxt = next(n for n in payload["next"] if n["kind"] == "command")
+        script = nxt["argv"][0].split("/")[-1]
+        return self.call(script, *nxt["argv"][1:], *extra)
+
+    def init(self, goal="把新用户次周留存率从 20% 提升到 25%", **obj):
+        objective = {"goal": goal, "target_metric": "次周留存率",
+                     "baseline": 0.20}
+        objective.update(obj)
+        draft = self.ws / "objective.json"
+        draft.write_text(json.dumps(objective, ensure_ascii=False),
+                         encoding="utf-8")
+        proc = self.call("init.py", "--objective", str(draft),
+                        "--workspace", str(self.ws))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        return h.out_json(proc)
+
+    def draft(self, name, obj):
+        path = self.ws / name
+        path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+        return path
+
+    def plan_draft(self, name="plan.json", final_deliverable="PRD", **over):
+        return self.draft(name, h.min_plan(final_deliverable=final_deliverable,
+                                           **over))
+
+    def artifact_draft(self, name="artifact.json", **over):
+        return self.draft(name, h.min_artifact(**over))
+
+    def read_state(self, payload):
+        return json.loads((Path(payload["pm_root"]) / "state.json")
+                          .read_text(encoding="utf-8"))
+
+    def snapshot(self, payload):
+        pm = Path(payload["pm_root"])
+        n = payload["iteration"]
+        return json.loads((pm / "iterations" / f"{n:02d}-verification-input.json")
+                          .read_text(encoding="utf-8"))
+
+    def report_draft(self, payload, verdict="PASS", **over):
+        ver = h.min_verification(verdict=verdict, **over)
+        ver["verification_input"] = self.snapshot(payload)
+        return self.draft(f"report-{verdict.lower()}.json", ver)
+
+    def reach_verifying(self, payload):
+        """从 INIT 一路推到 VERIFYING(已绑 PASS 前),返回最新 payload。"""
+        p = payload
+        p = h.out_json(self.run_next(p))            # start-planning
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "plan", str(self.plan_draft())))        # commit plan
+        p = h.out_json(self.run_next(p))            # plan-validated
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "artifact", str(self.artifact_draft())))  # commit artifact
+        p = h.out_json(self.run_next(p))            # artifact-validated
+        p = h.out_json(self.call(
+            "record_provenance.py", "--pm-root", p["pm_root"]))
+        return p
+
+    def bind_pass(self, payload):
+        p = payload
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.report_draft(p, "PASS"))))
+        p = h.out_json(self.call(
+            "record_provenance.py", "--pm-root", p["pm_root"], "--bind"))
+        p = h.out_json(self.call(
+            "transition.py", "--pm-root", p["pm_root"], "verdict"))
+        return p
+
+
+class TestInitAndLocate(LifecycleBase):
+    def test_init_creates_round_and_state(self):
+        payload = self.init()
+        pm = Path(payload["pm_root"])
+        self.assertTrue((pm / "state.json").is_file())
+        state = self.read_state(payload)
+        self.assertEqual(state["status"], "INIT")
+        self.assertEqual(state["iteration"], 0)
+        self.assertEqual(state["max_iterations"], 5)
+        self.assertEqual(payload["next"][0]["kind"], "command")
+        self.assertIn("start-planning", payload["next"][0]["argv"])
+
+    def test_init_goal_missing_waits(self):
+        payload = self.init(goal="")
+        state = self.read_state(payload)
+        self.assertEqual(state["status"], "WAITING_FOR_INPUT")
+        self.assertEqual(state["resume_to"], "PLANNING")
+        self.assertTrue(any(n["kind"] == "ask-user" for n in payload["next"]))
+
+    def test_init_metric_baseline_optional(self):
+        # target_metric 缺失与 baseline 为 null 是 schema 合法状态,仅提示不阻断
+        payload = self.init(target_metric=None, baseline=None)
+        self.assertEqual(self.read_state(payload)["status"], "INIT")
+        self.assertTrue(payload["warnings"], "缺失项应有 warnings 提示")
+
+    def test_init_idempotent_same_goal_reports_not_rebuilds(self):
+        first = self.init()
+        before = (Path(first["pm_root"]) / "state.json").read_bytes()
+        second = self.init()
+        self.assertEqual(second["pm_root"], first["pm_root"])
+        self.assertEqual((Path(first["pm_root"]) / "state.json").read_bytes(),
+                         before)
+
+    def test_init_new_goal_same_day_appends_seq(self):
+        self.init(goal="目标甲")
+        second = self.init(goal="目标乙")
+        self.assertTrue(second["pm_root"].rstrip("/").endswith("-2/pm"),
+                        second["pm_root"])
+
+    def test_locate_reports_latest_round(self):
+        self.init()
+        proc = self.call("init.py", "--locate", "--workspace", str(self.ws))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertEqual(payload["status"], "INIT")
+
+
+class TestNormalChain(LifecycleBase):
+    def test_full_chain_to_complete(self):
+        p = self.init()
+        p = self.reach_verifying(p)
+        self.assertEqual(p["status"], "VERIFYING")
+        p = self.bind_pass(p)
+        self.assertEqual(p["status"], "VERIFYING", "PASS 不转移状态")
+        p = h.out_json(self.run_next(p))            # render
+        self.assertEqual(p["written"], ["output/prd.md"])
+        self.assertEqual(p["next"][0]["kind"], "command")
+        self.assertIn("complete", p["next"][0]["argv"])
+        p = h.out_json(self.run_next(p))            # complete
+        self.assertEqual(p["status"], "COMPLETE")
+        state = self.read_state(p)
+        self.assertEqual(state["iteration"], 1)
+        kinds = [t["event"] for t in state["transitions"]]
+        self.assertEqual(kinds, ["start-planning", "plan-validated",
+                                 "artifact-validated", "verdict", "complete"])
+        # 投影摘要不受收口动作影响:transitions/COMPLETE 写入前后一致
+        snap = self.snapshot(p)
+        ver = json.loads((Path(p["pm_root"]) / "iterations" / "01-verification.json")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual(ver["provenance"]["state_projection_sha256"],
+                         snap["state_projection_sha256"])
+
+    def test_call_budget_normal_chain(self):
+        # design:正常链路 12 次固定调用 + state-update 实际次数;无显式 validate.py
+        p = self.init()
+        p = self.reach_verifying(p)
+        p = self.bind_pass(p)
+        p = h.out_json(self.run_next(p))
+        p = h.out_json(self.run_next(p))
+        self.assertEqual(p["status"], "COMPLETE")
+        counted = [c for c in self.calls]
+        self.assertLessEqual(len(counted), 13, counted)
+        self.assertNotIn("validate.py", counted)
+
+    def test_state_update_appends_ledger_and_known(self):
+        p = self.init()
+        p = h.out_json(self.run_next(p))  # PLANNING
+        patch = self.draft("patch.json", {
+            "known": ["合成背景事实"],
+            "evidence": [h.min_evidence(i=1)],
+        })
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "state-update", str(patch))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        state = self.read_state(h.out_json(proc))
+        self.assertEqual(state["known"], ["合成背景事实"])
+        self.assertEqual(state["evidence"][0]["id"], "E1")
+
+    def test_state_update_rejects_lifecycle_fields(self):
+        p = self.init()
+        p = h.out_json(self.run_next(p))
+        patch = self.draft("bad-patch.json", {"status": "EXECUTING"})
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "state-update", str(patch))
+        self.assertEqual(proc.returncode, 1)
+        self.assertFalse(h.out_json(proc)["ok"])
+
+    def test_revise_reuses_plan_no_new_plan_file(self):
+        p = self.init()
+        p = self.reach_verifying(p)
+        # REVISE 分支不得先绑定 PASS:绑定 PASS 后一切覆盖提交被拒绝
+        rev = h.min_verification(verdict="REVISE",
+                                 required_changes=["补齐次级指标口径"])
+        rev["verification_input"] = self.snapshot(p)
+        self.draft("report-revise.json", rev)
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.ws / "report-revise.json")))
+        p = h.out_json(self.call(
+            "record_provenance.py", "--pm-root", p["pm_root"], "--bind"))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "verdict"))
+        self.assertEqual(p["status"], "EXECUTING")
+        self.assertEqual(p["iteration"], 2)
+        pm = Path(p["pm_root"])
+        self.assertFalse((pm / "iterations" / "02-plan.json").exists())
+        self.assertTrue((pm / "iterations" / "01-plan.json").exists())
+
+
+class TestGuardsAndOverwrite(LifecycleBase):
+    def setUp(self):
+        super().setUp()
+        self.p = self.init()
+
+    def to_executing(self):
+        p = h.out_json(self.run_next(self.p))       # start-planning
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.run_next(p))            # plan-validated
+        self.p = p
+        return p
+
+    def to_executing_with_artifact(self):
+        p = self.to_executing()
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        return p
+
+    def test_commit_wrong_stage_rejected(self):
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                self.p["pm_root"], "start-planning"))
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "artifact", str(self.artifact_draft()))
+        # PLANNING 阶段提交 artifact:编号=1=当前轮,但阶段不匹配 → 拒绝
+        self.assertEqual(proc.returncode, 1)
+        self.assertFalse(h.out_json(proc)["ok"])
+
+    def test_illegal_event_lists_current_state(self):
+        proc = self.call("transition.py", "--pm-root", self.p["pm_root"],
+                        "complete")
+        self.assertEqual(proc.returncode, 1)
+        payload = h.out_json(proc)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["errors"])
+
+    def test_unknown_event_rejected(self):
+        proc = self.call("transition.py", "--pm-root", self.p["pm_root"],
+                        "no-such-event")
+        self.assertEqual(proc.returncode, 1)
+
+    def test_history_round_preserved_on_replan(self):
+        # REPLAN 后新提交编号由当前轮分配;历史轮(01-plan)结构上不可触及、字节不变
+        p = self.to_executing_with_artifact()
+        plan_before = (Path(p["pm_root"]) / "iterations" / "01-plan.json") \
+            .read_bytes()
+        # 提交 replan_required 产物(当轮原位覆盖)并走 executor-replan
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact",
+                                str(self.artifact_draft(
+                                    name="replan.json",
+                                    status="replan_required"))))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "executor-replan"))
+        self.assertEqual(p["iteration"], 2)
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        self.assertEqual(p["written"], ["iterations/02-plan.json"])
+        self.assertEqual((Path(p["pm_root"]) / "iterations" / "01-plan.json")
+                         .read_bytes(), plan_before)
+        self.assertEqual(self.read_state(p)["plans"],
+                         ["01-plan.json", "02-plan.json"])
+
+    def test_blocked_artifact_revisions_in_place(self):
+        p = self.to_executing()
+        blocked = self.artifact_draft(name="blocked.json", status="blocked")
+        p2 = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                 "artifact", str(blocked)))
+        p2 = h.out_json(self.call("transition.py", "--pm-root", p2["pm_root"],
+                                 "executor-blocked"))
+        self.assertEqual(p2["status"], "WAITING_FOR_INPUT")
+        self.assertEqual(p2["iteration"], 1)
+        self.assertEqual(self.read_state(p2)["resume_to"], "EXECUTING")
+        # 用户补数后 resume 回 EXECUTING;修订后的 completed 原位覆盖同名文件
+        p3 = h.out_json(self.call("transition.py", "--pm-root", p2["pm_root"],
+                                 "resume"))
+        self.assertEqual(p3["status"], "EXECUTING")
+        self.assertIsNone(self.read_state(p3).get("resume_to"))
+        p4 = h.out_json(self.call("commit.py", "--pm-root", p3["pm_root"],
+                                 "artifact", str(self.artifact_draft())))
+        self.assertEqual(p4["next"][0]["kind"], "command")
+        self.assertIn("artifact-validated", p4["next"][0]["argv"])
+
+    def test_blocked_report_reeval_distinguishes_reports(self):
+        # BLOCKED 报告重评:同轮新报告原位覆盖;重跑 verdict 以 ref_sha256 区分
+        p = self.reach_verifying(self.p)
+        rev = h.min_verification(verdict="BLOCKED")
+        rev["verification_input"] = self.snapshot(p)
+        self.draft("report-blocked.json", rev)
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "verification",
+                                str(self.ws / "report-blocked.json")))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"], "--bind"))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "verdict"))
+        self.assertEqual(p["status"], "WAITING_FOR_INPUT")
+        self.assertEqual(self.read_state(p)["resume_to"], "VERIFYING")
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "resume"))
+        self.assertEqual(p["status"], "VERIFYING")
+        # 新报告(内容不同)原位覆盖同名 verification 并重新绑定
+        rev2 = h.min_verification(verdict="PASS")
+        rev2["verification_input"] = self.snapshot(p)
+        rev2["strengths"] = ["复评后证据充分"]
+        self.draft("report-pass.json", rev2)
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "verification",
+                                str(self.ws / "report-pass.json")))
+        self.assertEqual(proc_next_kind(p), "command")
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"], "--bind"))
+        self.assertEqual(proc_next_kind(p), "command")
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "verdict"))
+        self.assertEqual(p["status"], "VERIFYING", "PASS 留在 VERIFYING")
+
+    def test_overwrite_refused_after_bound_pass(self):
+        p = self.reach_verifying(self.p)
+        p = self.bind_pass(p)
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "artifact", str(self.artifact_draft(
+                            name="artifact2.json")))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("绑定", proc.stdout)
+
+
+class TestBoundariesAndRerun(LifecycleBase):
+    def setUp(self):
+        super().setUp()
+        self.p = self.init()
+        self.p = h.out_json(self.run_next(self.p))  # start-planning
+
+    def test_commit_rerun_converges_from_partial_states(self):
+        # 边界中断恢复:重跑同一 commit 命令收敛
+        p = h.out_json(self.call("commit.py", "--pm-root", self.p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        self.assertEqual(p["status"], "PLANNING")
+        # (a) 产物已落盘但登记册未更新:模拟→手工回滚登记册后重跑
+        pm = Path(p["pm_root"])
+        state = self.read_state(p)
+        state["plans"] = []
+        (pm / "state.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        p2 = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                 "plan", str(self.plan_draft())))
+        self.assertEqual(p2["status"], "PLANNING")
+        self.assertEqual(self.read_state(p2)["plans"], ["01-plan.json"])
+        # (b) 完整提交后的幂等重跑
+        p3 = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                 "plan", str(self.plan_draft())))
+        self.assertTrue(p3["ok"])
+
+    def test_transition_rerun_after_success_no_double_increment(self):
+        # 转移成功但未返回:重跑按事件身份判已执行,iteration 不二次 +1
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                self.p["pm_root"], "start-planning"))
+        self.assertEqual(p["iteration"], 1)
+        proc2 = self.call("transition.py", "--pm-root",
+                          self.p["pm_root"], "start-planning")
+        self.assertEqual(proc2.returncode, 0, proc2.stdout)
+        p2 = h.out_json(proc2)
+        self.assertEqual(p2["iteration"], 1)
+        self.assertEqual(p2["status"], "PLANNING")
+        state = self.read_state(p2)
+        self.assertEqual(len([t for t in state["transitions"]
+                              if t["event"] == "start-planning"]), 1)
+
+    def test_resume_rerun_after_resume_to_cleared(self):
+        p = self.p
+        # PLANNING 无已登记 Plan 时 need-input 合法
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "need-input"))
+        self.assertEqual(p["status"], "WAITING_FOR_INPUT")
+        p2 = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                 "resume"))
+        self.assertEqual(p2["status"], "PLANNING")
+        p3 = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                 "resume"))
+        self.assertEqual(p3["status"], "PLANNING", "重跑判已恢复")
+        self.assertEqual(p3["iteration"], 1)
+
+    def test_invalidating_resume_goes_replan(self):
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                self.p["pm_root"], "need-input"))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "resume", "--invalidate-plan"))
+        self.assertEqual(p["status"], "PLANNING")
+        self.assertEqual(p["iteration"], 2)
+
+    def test_upper_limit_writes_stopped_and_authorized_resume(self):
+        # 5/5 正常完成后 reopen 需 +1:构造已到 5/5 的场景直接断言越上限
+        p = self.p
+        for i in range(4):
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "need-input"))
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "resume",
+                                    "--invalidate-plan"))
+        # 当前 iteration=5(1 次首轮 + 4 次 REPLAN);回到 WAITING 再触发第 6 轮
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "need-input"))
+        payload = h.out_json(self.call("transition.py", "--pm-root",
+                                      p["pm_root"], "resume",
+                                      "--invalidate-plan"))
+        self.assertEqual(payload["status"], "STOPPED")
+        self.assertTrue(any(n["kind"] == "stop" for n in payload["next"]),
+                        payload["next"])
+        state = self.read_state(payload)
+        self.assertEqual(state["iteration"], 5)
+        # 授权恢复:提额 +1 回 PLANNING
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                payload["pm_root"], "authorized-resume",
+                                "--max-iterations", "7"))
+        self.assertEqual(p["status"], "PLANNING")
+        self.assertEqual(self.read_state(p)["max_iterations"], 7)
+
+
+class TestCompleteGuard(LifecycleBase):
+    def test_complete_refuses_when_pass_unbound(self):
+        p = self.init()
+        p = self.reach_verifying(p)
+        proc = self.call("render.py", "--pm-root", p["pm_root"])
+        self.assertEqual(proc.returncode, 0)
+        proc = self.call("transition.py", "--pm-root", p["pm_root"], "complete")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_complete_refuses_after_pass_content_change(self):
+        p = self.init()
+        p = self.reach_verifying(p)
+        p = self.bind_pass(p)
+        pm = Path(p["pm_root"])
+        art = json.loads((pm / "iterations" / "01-artifact.json")
+                         .read_text(encoding="utf-8"))
+        art["artifact"]["title"] = "PASS 之后被改写"
+        # 绕过脚本的直接编辑(模拟真实事故);complete 的守卫必须拦住
+        (pm / "iterations" / "01-artifact.json").write_text(
+            json.dumps(art, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        proc = self.call("render.py", "--pm-root", p["pm_root"])
+        proc = self.call("transition.py", "--pm-root", p["pm_root"], "complete")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertFalse(payload["ok"])
+
+    def test_complete_55_passes(self):
+        # 5/5 轮 PASS 正常完成,不因等于上限误判
+        p = self.init()
+        p = h.out_json(self.run_next(p))  # PLANNING iteration=1
+        for _ in range(4):
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "need-input"))
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "resume",
+                                    "--invalidate-plan"))
+        self.assertEqual(p["iteration"], 5)
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.run_next(p))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.run_next(p))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"]))
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.report_draft(p, "PASS"))))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"], "--bind"))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "verdict"))
+        p = h.out_json(self.call("render.py", "--pm-root", p["pm_root"]))
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "complete"))
+        self.assertEqual(p["status"], "COMPLETE")
+        self.assertEqual(p["iteration"], 5)
+
+
+class TestProtocolShapes(LifecycleBase):
+    def test_failure_payload_shape(self):
+        proc = self.call("transition.py", "--pm-root",
+                        str(self.ws / "nope"), "start-planning")
+        self.assertEqual(proc.returncode, 1)
+        payload = h.out_json(proc)
+        self.assertFalse(payload["ok"])
+        for key in ("command", "pm_root", "skill_root", "status", "iteration",
+                    "written", "deleted", "errors", "warnings", "next"):
+            self.assertIn(key, payload)
+
+    def test_success_and_idempotent_payload_shapes(self):
+        p = self.init()
+        self.assertTrue(p["ok"])
+        p2 = self.init()
+        self.assertTrue(p2["ok"])          # 幂等重跑 ok=true
+        self.assertEqual(p2["written"], [])
+
+
+class TestCloseoutReplays(LifecycleBase):
+    """任务 3.2 点名场景的固定回放:仅改 Ledger、手改后重渲染覆盖。"""
+
+    def reach_bound(self):
+        p = self.init()
+        p = self.reach_verifying(p)
+        return self.bind_pass(p)
+
+    def test_ledger_only_change_after_bound_pass_blocks_complete(self):
+        p = self.reach_bound()
+        patch = self.draft("patch.json", {"evidence": [h.min_evidence(i=2)]})
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                         "state-update", str(patch))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any("P1" in str(e.get("reason", ""))
+                            for e in payload["errors"]), payload["errors"])
+        # design:105 补丁写入不因写后校验失败回滚;但交付资格被 P1 拦住
+        state = self.read_state(p)
+        self.assertEqual([e["id"] for e in state.get("evidence", [])], ["E2"])
+        proc = self.call("transition.py", "--pm-root", p["pm_root"], "complete")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+
+    def test_hand_edited_output_replaced_by_rerender(self):
+        # 纯渲染修复路径:手工改动被重新渲染覆盖,不修改来源 JSON
+        p = self.reach_bound()
+        self.call("render.py", "--pm-root", p["pm_root"])
+        out = Path(p["pm_root"]) / "output" / "prd.md"
+        out.write_text(out.read_text(encoding="utf-8") + "手工追加\n",
+                       encoding="utf-8")
+        proc = self.call("render.py", "--pm-root", p["pm_root"])
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertNotIn("手工追加", out.read_text(encoding="utf-8"))
+        proc = self.call("render.py", "--pm-root", p["pm_root"], "--check")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+
+class TestReviewFixes(LifecycleBase):
+    """2026-10-23 评审修复:定位排序、终局轮次复用、提额校验、文档命令完整性。"""
+
+    def test_locate_sorts_numeric_suffix(self):
+        # prd-...-10 会被字符串排序判早于 prd-...-9
+        pev = self.ws / ".pev"
+        for seq in (9, 10):
+            pm = pev / f"prd-2026-10-23-{seq}" / "pm"
+            pm.mkdir(parents=True)
+            (pm / "state.json").write_text(json.dumps(
+                {"objective": {"goal": "g"}, "status": "INIT",
+                 "iteration": 0, "max_iterations": 5}), encoding="utf-8")
+        proc = self.call("init.py", "--locate", "--workspace", str(self.ws))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue(h.out_json(proc)["pm_root"].endswith(
+            "prd-2026-10-23-10/pm"), h.out_json(proc)["pm_root"])
+
+    def test_init_same_goal_terminal_round_starts_new_seq(self):
+        first = self.init(goal="目标甲")
+        state_path = Path(first["pm_root"]) / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["status"] = "COMPLETE"
+        state_path.write_text(json.dumps(state, ensure_ascii=False),
+                              encoding="utf-8")
+        second = self.init(goal="目标甲")
+        self.assertNotEqual(second["pm_root"], first["pm_root"])
+        self.assertTrue(second["pm_root"].rstrip("/").endswith("-2/pm"))
+        self.assertEqual(self.read_state(second)["status"], "INIT")
+
+    def test_init_active_round_idempotent_next_follows_status(self):
+        first = self.init(goal="目标甲")
+        second = self.init(goal="目标甲")
+        self.assertEqual(second["pm_root"], first["pm_root"])
+        self.assertTrue(any(n["kind"] == "command"
+                            and "start-planning" in n.get("argv", [])
+                            for n in second["next"]), second["next"])
+
+    def test_authorized_resume_rejects_non_increase(self):
+        p = self.init()
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                p["pm_root"], "start-planning"))
+        for _ in range(4):
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "need-input"))
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "resume",
+                                    "--invalidate-plan"))
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                p["pm_root"], "need-input"))
+        p = h.out_json(self.call("transition.py", "--pm-root",
+                                p["pm_root"], "resume",
+                                "--invalidate-plan"))
+        self.assertEqual(p["status"], "STOPPED")
+        proc = self.call("transition.py", "--pm-root", p["pm_root"],
+                         "authorized-resume", "--max-iterations", "5")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertFalse(h.out_json(proc)["ok"])
+
+    def test_skill_md_command_examples_carry_pm_root(self):
+        text = (h.SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        import re
+        subcommands = (r"(--pm-root|plan|artifact|verification|state-update|"
+                       r"verdict|complete|resume|reopen|authorized-resume|"
+                       r"need-input|start-planning|plan-validated|"
+                       r"artifact-validated|executor-replan|executor-blocked|"
+                       r"--bind|--prune|--check)")
+        pat = (r"`[^`\n]*\b(commit|transition|record_provenance)\.py "
+               + subcommands + r"[^`\n]*`")
+        self.assertGreaterEqual(len(re.findall(pat, text)), 4,
+                                "SKILL.md 应含完整命令示例")
+        for m in re.finditer(pat, text):
+            self.assertIn("--pm-root", m.group(0), m.group(0))
+
+
+def proc_next_kind(payload):
+    return payload["next"][0]["kind"]
+
+
+if __name__ == "__main__":
+    unittest.main()

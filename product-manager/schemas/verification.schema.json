@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification",
+  "type": "object",
+  "required": ["verdict", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]},
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["what", "why", "change"],
+        "properties": {
+          "what": {"type": "string", "description": "What is wrong"},
+          "why": {"type": "string", "description": "Why it matters"},
+          "change": {"type": "string", "description": "What must change"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    "verification_input": {
+      "type": "object",
+      "description": "Verifier 对快照标识的原文复述(与 iterations/<N>-verification-input.json 逐字段一致才可提交)",
+      "required": ["algorithm", "iteration", "plan_path", "artifact_sha256", "plan_sha256", "state_projection_sha256"],
+      "properties": {
+        "algorithm": {"type": "string", "enum": ["sha256-v1"]},
+        "iteration": {"type": "integer", "minimum": 1},
+        "plan_path": {"type": "string"},
+        "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "state_projection_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "description": "绑定成功的来源证明,仅由 record_provenance.py --bind 写入",
+      "required": ["algorithm", "plan_path", "artifact_sha256", "plan_sha256", "state_projection_sha256"],
+      "properties": {
+        "algorithm": {"type": "string", "enum": ["sha256-v1"]},
+        "plan_path": {"type": "string"},
+        "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "state_projection_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV State",
+  "type": "object",
+  "required": ["objective", "prd_source", "status", "iteration", "max_iterations"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["INIT", "PLANNING", "EXECUTING", "VERIFYING", "COMPLETE", "WAITING_FOR_INPUT", "WAITING_FOR_PRD"]
+    },
+    "resume_to": {
+      "type": ["string", "null"],
+      "description": "仅 status=WAITING_FOR_INPUT 时为阶段名,用户答复后回到该阶段;清除时写 null 或整个省略字段,两者等价(由 validate.py R3 强制)",
+      "enum": ["PLANNING", "EXECUTING", "VERIFYING", null]
+    },
+    "prd_source": {
+      "type": "string",
+      "description": "上游业务 PRD 文件路径(通常为 .pev/<轮次>/pm/output/prd.md,或用户直接提供的文档);引用不复制,追踪与打回都以它为准"
+    },
+    "prd_gaps": {
+      "type": "array",
+      "description": "human 选择回 PM 的未决问题清单;仅 status=WAITING_FOR_PRD 时允许非空(由 validate.py 强制)",
+      "items": {
+        "type": "object",
+        "required": ["question", "prd_anchor"],
+        "properties": {
+          "question": {"type": "string"},
+          "prd_anchor": {"type": "string", "description": "问题锚定的 PRD 章节/位置"},
+          "why": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "required": ["goal"],
+      "properties": {
+        "goal": {"type": "string"},
+        "deadline": {"type": ["string", "null"]}
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Evidence Ledger",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type", "confidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R10 对账)"},
+    "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R10 对账)"},
+    "iteration": {"type": "integer", "minimum": 0},
+    "max_iterations": {"type": "integer", "minimum": 1, "default": 5}
+  }
+}

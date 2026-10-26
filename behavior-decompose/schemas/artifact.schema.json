@@ -1,0 +1,180 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {"type": "string", "enum": ["completed", "replan_required", "blocked"]},
+    "replan_reason": {
+      "type": "object",
+      "description": "status 为 replan_required / blocked 时必填(由 validate.py 强制)",
+      "properties": {
+        "problem": {"type": "string"},
+        "why_invalid": {"type": "string"},
+        "new_information": {"type": "string"},
+        "recommended": {"type": "string"}
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "追不到上游依据的产品缺口,待用户三选一(①回上游 ②上游补充 ③直接拍板记 DECISION)",
+      "items": {
+        "type": "object",
+        "required": ["what", "blocks"],
+        "properties": {
+          "what": {"type": "string", "description": "上游未定义/自相矛盾的产品行为"},
+          "spec_anchor": {"type": "string", "description": "缺口锚定的上游章节/位置(能定位就填)"},
+          "blocks": {"type": "string", "description": "哪些 story/scenario 因此无法产出"},
+          "why": {"type": "string", "description": "为什么重要"},
+          "recommended": {"type": "string", "description": "推荐答案(供用户拍板参考,不是默认值)"}
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "human 拍板决定(缺口直接答复、预览精修指令 add/remove/edit/split/merge/reorder),同步记入 Evidence Ledger(type=DECISION)"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "description": "行为目录正文结构(Epic → Feature → Story → AC/Scenarios + 依赖),由 templates/catalog.md 渲染",
+      "required": ["category_defaults", "epics", "dependencies"],
+      "properties": {
+        "category_defaults": {
+          "type": "object",
+          "description": "全局表态(INIT 时定一次,迭代间不变;变更须记 DECISION):11 类中对全部 story 的适用性。未列入两边的类别按 story 表态——适用写 story 的 applicable_add(计入分母),豁免写 inapplicable_add 并给理由;两者都不写视为本 story 不适用(沉默豁免,由 Verifier 审)。适用性主要由项目域决定,在这里写一次,不要逐 story 重复",
+          "required": ["applicable", "inapplicable"],
+          "properties": {
+            "applicable": {
+              "type": "array",
+              "minItems": 1,
+              "description": "对全部 story 适用的类别,通常至少含 normal/exception。声明即要求每个 story 都有证据(行为类=场景 class,风险类=covers)",
+              "items": {"type": "string", "enum": ["normal", "exception", "boundary", "permission_state", "dependency", "security", "authorization", "funds", "privacy", "irreversible", "data_integrity"]}
+            },
+            "inapplicable": {
+              "type": "array",
+              "description": "全项目不适用的类别,每项附项目级理由。story 可用 applicable_add 反转",
+              "items": {
+                "type": "object",
+                "required": ["what", "reason"],
+                "properties": {
+                  "what": {"type": "string", "enum": ["normal", "exception", "boundary", "permission_state", "dependency", "security", "authorization", "funds", "privacy", "irreversible", "data_integrity"]},
+                  "reason": {"type": "string", "description": "项目级理由,如\"本项目无任何资金流\""}
+                }
+              }
+            }
+          }
+        },
+        "epics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "features"],
+            "properties": {
+              "id": {"type": "string"},
+              "title": {"type": "string"},
+              "scope": {"type": "string"},
+              "success_criteria": {"type": "string", "description": "怎么算做完(How we know it's done)"},
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "title", "stories"],
+                  "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "stories": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "title", "points", "priority", "acceptance_criteria", "scenarios", "trace"],
+                        "properties": {
+                          "id": {"type": "string"},
+                          "title": {"type": "string", "description": "业务语言描述的用户可见价值,不含实现"},
+                          "points": {"type": "integer", "enum": [1, 2, 3, 5, 8], "description": "斐波那契故事点,8 为上限;13+ 必拆,非斐波那契值被 schema 拦截"},
+                          "priority": {"type": "string", "enum": ["P0", "P1", "P2", "P3"]},
+                          "acceptance_criteria": {"type": "array", "minItems": 3, "items": {"type": "string"}},
+                          "scenarios": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "object",
+                              "required": ["class", "given", "when", "then"],
+                              "properties": {
+                                "class": {"type": "string", "enum": ["normal", "exception", "boundary", "permission_state", "dependency"]},
+                                "given": {"type": "string", "description": "业务语言前置条件"},
+                                "when": {"type": "string", "description": "用户操作"},
+                                "then": {"type": "string", "description": "用户可见结果"},
+                                "trace": {"type": "string", "description": "场景级溯源(与 story 级 trace 不同才填)"},
+                                "covers": {
+                                  "type": "array",
+                                  "description": "本场景覆盖的风险类(仅 6 风险类;5 行为类由 class 表达)。风险类覆盖率的唯一依据",
+                                  "items": {"type": "string", "enum": ["security", "authorization", "funds", "privacy", "irreversible", "data_integrity"]}
+                                }
+                              }
+                            }
+                          },
+                          "trace": {"type": "string", "description": "溯源:spec_source §x(FACT)或精修决定锚点(DECISION)"},
+                          "coverage_assessment": {
+                            "type": "object",
+                            "description": "story 级偏离声明(可选):只写与全局 category_defaults 不同的地方,无偏离则整个省略。有效适用集由校验脚本合并全局默认与本字段后得出——覆盖率门禁的分母来源,百分比由 validate.py 算出,不由 Verifier 手填",
+                            "properties": {
+                              "applicable_add": {
+                                "type": "array",
+                                "description": "本 story 适用、但全局未标适用的类别(含用适用反转全局豁免,如支付 story 加回 funds)。声明即计入分母,须配套场景证据——不确定就别声明(沉默豁免由 Verifier 审)",
+                                "items": {"type": "string", "enum": ["normal", "exception", "boundary", "permission_state", "dependency", "security", "authorization", "funds", "privacy", "irreversible", "data_integrity"]}
+                              },
+                              "inapplicable_add": {
+                                "type": "array",
+                                "description": "本 story 特有的豁免,压过全局适用;必须给本 story 级具体理由",
+                                "items": {
+                                  "type": "object",
+                                  "required": ["what", "reason"],
+                                  "properties": {
+                                    "what": {"type": "string", "enum": ["normal", "exception", "boundary", "permission_state", "dependency", "security", "authorization", "funds", "privacy", "irreversible", "data_integrity"]},
+                                    "reason": {"type": "string", "description": "必须具体到本 story——不接受\"不适用\"这类空泛写法"}
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "description": "产品级依赖(哪个行为必须先存在),不是技术/构建依赖",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "type"],
+            "properties": {
+              "from": {"type": "string", "description": "被阻塞项 id,如 FEATURE-1.2"},
+              "to": {"type": "string", "description": "阻塞项 id,如 FEATURE-1.1"},
+              "type": {"type": "string", "enum": ["blocked-by", "related-to"]},
+              "note": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

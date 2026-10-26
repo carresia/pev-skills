@@ -1,0 +1,332 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact (module-design)",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "replan_required", "blocked"]
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "溯不到依据或需越出架构声明的缺口;非空时 status 应为 blocked",
+      "items": {"type": "string"}
+    },
+    "decisions": {
+      "type": "array",
+      "description": "用户拍板与精修记录(含三选一结果),每条对应 Ledger 一条 DECISION",
+      "items": {
+        "type": "object",
+        "required": ["id", "decision"],
+        "properties": {
+          "id": {"type": "string", "description": "拍板锚点,如 d2;evidence 引用形如 01-artifact decisions#d2"},
+          "decision": {"type": "string"},
+          "context": {"type": "string"}
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "本迭代新增/修订的 Evidence Ledger 条目(与 state.evidence 同构)",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type", "confidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "source": {
+            "type": "object",
+            "description": "可选:证据的可定位来源(文件+摘录+摘要)。存在时 validate.py 回读校验新鲜度。path 为项目根目录(含 .pev 的目录)相对路径,或绝对路径",
+            "required": ["path", "excerpt"],
+            "properties": {
+              "path": {"type": "string"},
+              "locator": {"type": "string"},
+              "excerpt": {"type": "string"},
+              "digest": {"type": "string", "description": "sha256:<64位hex> 或 pending"}
+            }
+          }
+        }
+      }
+    },
+    "replan_reason": {
+      "type": "object",
+      "description": "status=replan_required/blocked 时必填(校验脚本强制)",
+      "properties": {
+        "problem": {"type": "string"},
+        "why_plan_invalid": {"type": "string"},
+        "new_information": {"type": "string"},
+        "recommended_replan": {"type": "string"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["deliverable_kind"],
+      "properties": {
+        "deliverable_kind": {
+          "type": "string",
+          "enum": ["module_designs"],
+          "description": "单文件承载全部目标模块的设计;必填块由 validate.py 强制"
+        },
+        "input_summary": {
+          "type": "object",
+          "description": "survey_architecture 产出:架构声明条目化",
+          "properties": {
+            "goal": {"type": "string"},
+            "target_modules": {
+              "type": "array",
+              "description": "本轮设计的目标模块 id(与 state.modules[] 一致)",
+              "items": {"type": "string"}
+            },
+            "architecture_snapshot": {
+              "type": "object",
+              "description": "架构声明的结构化快照(边界守恒与覆盖对账的机器基准);快照是否忠实由 Verifier 对照架构产物审",
+              "properties": {
+                "modules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "name", "responsibility", "depends_on", "exposes", "owns_data"],
+                    "properties": {
+                      "id": {"type": "string", "description": "架构模块 id,如 M1"},
+                      "name": {"type": "string"},
+                      "responsibility": {"type": "string"},
+                      "depends_on": {"type": "array", "items": {"type": "string"}},
+                      "exposes": {"type": "array", "items": {"type": "string"}},
+                      "owns_data": {"type": "array", "items": {"type": "string"}}
+                    }
+                  }
+                },
+                "interactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "scenario", "from", "to"],
+                    "properties": {
+                      "id": {"type": "string", "description": "如 I1,勘察时编号,锚点为 scenario"},
+                      "scenario": {"type": "string"},
+                      "from": {"type": "string", "description": "模块 id 或 external:<名称>"},
+                      "to": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            },
+            "upstream_items": {
+              "type": "array",
+              "description": "覆盖检查的分母:每个目标模块的职责条目(<id>-R)与每条暴露能力(<id>-E<n>);声明漏项会被 Verifier 打回",
+              "items": {
+                "type": "object",
+                "required": ["id", "item", "anchor"],
+                "properties": {
+                  "id": {"type": "string", "description": "如 M1-R、M1-E2"},
+                  "item": {"type": "string"},
+                  "anchor": {"type": "string", "description": "架构产物锚点,如 architecture.md 模块划分表 M1 行"}
+                }
+              }
+            }
+          }
+        },
+        "codebase_fit": {
+          "type": "object",
+          "description": "survey_codebase 产出(仅现有库):当前模式/可复用约定/勿破坏边界/技术债/已知瓶颈",
+          "properties": {
+            "current_pattern": {"type": "string"},
+            "reuse_conventions": {"type": "array", "items": {"type": "string"}},
+            "do_not_break": {"type": "array", "items": {"type": "string"}},
+            "tech_debt": {"type": "array", "items": {"type": "string"}},
+            "known_bottlenecks": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "modules": {
+          "type": "array",
+          "description": "逐模块设计;id 必须 ⊆ 架构快照模块 id,depends_on/data/exposes 守恒由 validate.py 强制",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "design_mode", "responsibility", "depends_on", "internal_components", "exposes_realization", "self_challenge"],
+            "properties": {
+              "id": {"type": "string", "description": "架构模块 id,如 M1,不新造"},
+              "name": {"type": "string"},
+              "design_mode": {"type": "string", "enum": ["detail", "brief"]},
+              "responsibility": {"type": "string", "description": "承接架构声明的职责,可细化不可改写语义"},
+              "not_responsible": {"type": "array", "items": {"type": "string"}},
+              "depends_on": {"type": "array", "items": {"type": "string"}, "description": "必须 ⊆ 架构快照声明(validate.py 强制);需要新依赖 = 架构层缺口走三选一"},
+              "internal_components": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "name", "responsibility", "hides", "trace"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 M1-C1,模块内唯一"},
+                    "name": {"type": "string"},
+                    "responsibility": {"type": "string"},
+                    "hides": {"type": "string", "description": "组件隐藏的设计决策/信息——它存在的理由;复述职责不算 hides(validate.py 查非空)"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "core_flows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "name", "steps", "trace"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 M1-F1"},
+                    "name": {"type": "string"},
+                    "steps": {"type": "string"},
+                    "failure_handling": {"type": "string"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "exposes_realization": {
+                "type": "array",
+                "description": "架构 exposes → 内部实现落点;expose 必须 ∈ 架构快照 exposes,component_id 必须存在(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["expose", "component_id", "trace"],
+                  "properties": {
+                    "expose": {"type": "string"},
+                    "component_id": {"type": "string"},
+                    "note": {"type": "string"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "owned_data_handling": {
+                "type": "array",
+                "description": "自有数据的内部处理(逻辑级,无表结构);data 必须 ∈ 架构快照 owns_data(validate.py 强制);表结构归 database-schema-design",
+                "items": {
+                  "type": "object",
+                  "required": ["data", "handling", "trace"],
+                  "properties": {
+                    "data": {"type": "string"},
+                    "handling": {"type": "string"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "interaction_commitments": {
+                "type": "array",
+                "description": "承接的架构关键交互;interaction 必须 ∈ 架构快照交互 id 且本模块是参与方(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["interaction", "role", "internal_handling"],
+                  "properties": {
+                    "interaction": {"type": "string", "description": "架构快照交互 id,如 I3"},
+                    "role": {"type": "string", "description": "本模块在该交互中的角色(发起方/接收方)"},
+                    "internal_handling": {"type": "string", "description": "哪个内部组件以什么方式承接"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "dfx": {
+                "type": "array",
+                "description": "DFX(Design for X)设计点;detail 五项 x 全覆盖、brief ≥1(validate.py 强制);design 必须落到具体组件/机制,口号会被 Verifier 打回",
+                "items": {
+                  "type": "object",
+                  "required": ["x", "design", "trace"],
+                  "properties": {
+                    "x": {"type": "string", "enum": ["reliability", "testability", "maintainability", "observability", "security"]},
+                    "design": {"type": "string"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "fmea": {
+                "type": "array",
+                "description": "FMEA(失效模式与影响分析);仅 detail 模式允许且必填非空、component_id 必须存在、覆盖全部核心组件(validate.py 强制);brief 模式必须为空",
+                "items": {
+                  "type": "object",
+                  "required": ["component_id", "failure_mode", "effect", "detection", "mitigation"],
+                  "properties": {
+                    "component_id": {"type": "string"},
+                    "failure_mode": {"type": "string"},
+                    "effect": {"type": "string"},
+                    "detection": {"type": "string"},
+                    "mitigation": {"type": "string"}
+                  }
+                }
+              },
+              "tradeoffs": {
+                "type": "array",
+                "description": "模块内关键取舍;cost 非空(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["decision", "choice", "rationale", "cost"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 T1"},
+                    "decision": {"type": "string"},
+                    "choice": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "cost": {"type": "string", "description": "放弃的东西;必须具体,不接受空话(validate.py 查非空)"},
+                    "alternative": {"type": "string"}
+                  }
+                }
+              },
+              "self_challenge": {
+                "type": "array",
+                "description": "提交前的 7 维自查;7 维全齐、发现全处置(validate.py 强制)。自查不替代 Verifier 独立评审",
+                "items": {
+                  "type": "object",
+                  "required": ["dimension", "finding", "disposition"],
+                  "properties": {
+                    "dimension": {
+                      "type": "string",
+                      "enum": ["failure_modes", "consistency", "concurrency", "boundary_erosion", "hidden_coupling", "testability", "simpler_alternative"]
+                    },
+                    "finding": {"type": "string", "description": "空字符串 = 该维无发现"},
+                    "disposition": {"type": "string", "enum": ["none", "fixed", "accepted_risk"], "description": "finding 为空时只能 none;非空时只能 fixed 或 accepted_risk"},
+                    "rationale": {"type": "string", "description": "accepted_risk 时必填(validate.py 强制)"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "risks": {
+          "type": "array",
+          "description": "接受的风险:对抗审查中存活且明确接受的部分",
+          "items": {
+            "type": "object",
+            "required": ["risk", "impact", "mitigation"],
+            "properties": {
+              "id": {"type": "string"},
+              "risk": {"type": "string"},
+              "impact": {"type": "string"},
+              "mitigation": {"type": "string"},
+              "to_validate": {"type": "string"}
+            }
+          }
+        },
+        "upstream_mapping": {
+          "type": "array",
+          "description": "上游条目(职责/暴露)→ 模块落点;与 upstream_items 双向对账(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["upstream_item", "module_id", "trace"],
+            "properties": {
+              "upstream_item": {"type": "string", "description": "upstream_items 的 id,如 M1-E2"},
+              "module_id": {"type": "string", "description": "承载它的模块 id"},
+              "trace": {"type": "string"}
+            }
+          }
+        },
+        "downstream_deliverables": {
+          "type": "object",
+          "description": "给下游 skills 的输入清单(应填,Verifier 审完整性)",
+          "properties": {
+            "api_and_interface_design": {"type": "array", "items": {"type": "string"}},
+            "database_schema_design": {"type": "array", "items": {"type": "string"}},
+            "c4_architecture": {"type": "array", "items": {"type": "string"}},
+            "documentation_and_adrs": {"type": "array", "items": {"type": "string"}},
+            "planning_and_task_breakdown": {"type": "array", "items": {"type": "string"}},
+            "test_driven_development": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    }
+  }
+}

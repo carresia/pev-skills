@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {"type": "string", "enum": ["completed", "replan_required", "blocked"]},
+    "replan_reason": {
+      "type": "object",
+      "description": "status 为 replan_required / blocked 时必填(由 validate.py 强制)",
+      "properties": {
+        "problem": {"type": "string"},
+        "why_invalid": {"type": "string"},
+        "new_information": {"type": "string"},
+        "recommended": {"type": "string"}
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "追不到上游依据的设计缺口,待用户三选一(①回 architecture-design ②回对应设计 skill ③直接拍板记 DECISION)",
+      "items": {
+        "type": "object",
+        "required": ["what", "blocks"],
+        "properties": {
+          "what": {"type": "string", "description": "上游未定义/自相矛盾的设计(如架构未定模块间协议)"},
+          "upstream_anchor": {"type": "string", "description": "缺口锚定的上游位置及该回的 skill(能定位就填)"},
+          "blocks": {"type": "string", "description": "哪些任务因此无法产出"},
+          "why": {"type": "string", "description": "为什么重要"},
+          "recommended": {"type": "string", "description": "推荐答案(供用户拍板参考,不是默认值)"}
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "description": "human 拍板决定(缺口直接答复、预览精修指令 add/remove/edit/split/merge/reorder、范围收敛),同步记入 Evidence Ledger(type=DECISION)"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "description": "任务清单正文结构(工作项登记 + 阶段→任务 + 检查点 + 风险),由 templates/task-plan.md 渲染",
+      "required": ["inventory", "phases"],
+      "properties": {
+        "inventory": {
+          "type": "array",
+          "minItems": 1,
+          "description": "上游工作项登记(覆盖对账的分母,在范围内的条条必须有任务落点)。既登记设计项,也登记工程支撑项(基建/CI/migration 脚手架,anchor=DECISION 或 INFERENCE 锚点)。第一个 artifact 定一次,迭代间不变;分母变更(增删项、in_scope 翻转、换 kind/anchor)须在新迭代 Evidence Ledger 记 DECISION(validate.py R9 强制)——漏拆任务时改分母是作弊",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "title", "anchor"],
+            "properties": {
+              "id": {"type": "string", "description": "INV-{n} 全局唯一"},
+              "kind": {"type": "string", "enum": ["architecture_module", "module_capability", "api_contract", "db_object", "story", "spec_item", "engineering_item"]},
+              "title": {"type": "string", "description": "工作项名,用上游自己的语言"},
+              "anchor": {"type": "string", "description": "溯源锚点:FACT=上游产物位置(如 arch/output 模块表 M2 行、api 契约 C3);工程支撑项=DECISION/INFERENCE 锚点"},
+              "in_scope": {"type": "boolean", "description": "默认 true。置 false = 本轮不拆,note 必须写理由(validate.py 强制)"},
+              "note": {"type": "string", "description": "in_scope=false 时必填:为什么范围外、谁拍的、后续轮次怎么接"}
+            }
+          }
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "tasks", "checkpoint"],
+            "properties": {
+              "id": {"type": "string", "description": "PHASE-{n}"},
+              "title": {"type": "string"},
+              "objective": {"type": "string", "description": "本阶段结束时系统处于什么状态"},
+              "tasks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["id", "title", "description", "size", "files_touched", "acceptance_criteria", "verification", "implements", "dependencies", "trace"],
+                  "properties": {
+                    "id": {"type": "string", "description": "TASK-{阶段号}.{序号},全局唯一"},
+                    "title": {"type": "string", "description": "一句话说清做什么;出现\"和/and/以及\"串两件事是应拆信号"},
+                    "description": {"type": "string", "description": "做什么、不做什么,一段话"},
+                    "size": {"type": "string", "enum": ["XS", "S", "M", "L"], "description": "四档;XL 不存在——超 8 文件必拆(validate.py 按文件数核对档位)"},
+                    "files_touched": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "预计改动的文件路径(估算即声明,脚本按档位核对:XS=1 · S≤2 · M=3-5 · L=6-8)"},
+                    "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "可判定的完成条件;超过 5 条是任务过大信号(validate.py 拦截)"},
+                    "verification": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": ["how", "kind"],
+                        "properties": {
+                          "how": {"type": "string", "description": "命令或操作,如 npm test -- --grep orders"},
+                          "kind": {"type": "string", "enum": ["test", "build", "lint", "typecheck", "manual"]},
+                          "expectation": {"type": "string", "description": "通过的判定(命令类可省,manual 必填看什么)"}
+                        }
+                      }
+                    },
+                    "implements": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "落点哪些工作项(inventory id)——覆盖对账的分子。纯工程支撑任务也登记对应 engineering_item,不留无落点任务"},
+                    "dependencies": {"type": "array", "items": {"type": "string"}, "description": "前置任务 id;无依赖留空数组。引用必须存在、无环、文档顺序不得违反拓扑序(validate.py 强制)"},
+                    "parallel_group": {"type": "string", "description": "可选。同组任务可并行执行;组内不得存在任何依赖路径(validate.py 强制)"},
+                    "trace": {"type": "string", "description": "溯源:上游产物 §x(FACT)或精修/拍板锚点(DECISION)"}
+                  }
+                }
+              },
+              "checkpoint": {
+                "type": "object",
+                "description": "阶段终点检查点:全部通过才进下一阶段",
+                "required": ["checks", "review_with_human"],
+                "properties": {
+                  "checks": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "可执行的检查(测试全绿/构建通过/端到端流程可用),写命令或可观测判据"},
+                  "review_with_human": {"type": "boolean", "description": "关键里程碑置 true:进下一阶段前人先看"}
+                }
+              }
+            }
+          }
+        },
+        "risks": {
+          "type": "array",
+          "description": "实施风险与缓解(可选,不适用省略)",
+          "items": {
+            "type": "object",
+            "required": ["risk", "impact", "mitigation"],
+            "properties": {
+              "risk": {"type": "string"},
+              "impact": {"type": "string", "enum": ["High", "Medium", "Low"]},
+              "mitigation": {"type": "string"}
+            }
+          }
+        },
+        "open_questions": {
+          "type": "array",
+          "description": "需要人给输入的开放问题(可选);已挂起走三选一的不在这里,在 unresolved",
+          "items": {"type": "string"}
+        }
+      }
+    }
+  }
+}

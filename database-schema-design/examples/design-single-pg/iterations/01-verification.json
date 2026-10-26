@@ -1,0 +1,56 @@
+{
+  "verdict": "PASS",
+  "scores": {
+    "upstream_conformance": 5,
+    "schema_clarity": 4,
+    "consistency": 4,
+    "compatibility": 4,
+    "tradeoff_honesty": 4,
+    "simplicity": 5,
+    "traceability": 5
+  },
+  "store_reviews": [
+    {
+      "store_id": "D1",
+      "verdict": "PASS",
+      "scores": {
+        "upstream_conformance": 5,
+        "schema_clarity": 4,
+        "consistency": 4,
+        "compatibility": 4,
+        "tradeoff_honesty": 4,
+        "simplicity": 5,
+        "traceability": 5
+      },
+      "critical_issues": []
+    }
+  ],
+  "cross_review": {
+    "verdict": "pass",
+    "checked_items": ["命名与概念一致", "ID 与键策略一致", "冗余权威源", "演进策略一致"],
+    "findings": []
+  },
+  "gates": {
+    "stores_complete": true,
+    "entities_within_upstream": true,
+    "upstream_mapped": true,
+    "findings_disposed": true,
+    "cross_consistent": true,
+    "notes": ""
+  },
+  "redlines": [
+    {"id": "RED-01", "applies": true, "passed": true, "details": "covered_entities 全在 M1 owns_data,表条条回指实体"},
+    {"id": "RED-02", "applies": true, "passed": true, "details": "止于 schema,无持久层代码/任务列表"},
+    {"id": "RED-03", "applies": true, "passed": true, "details": "金额列用 DECIMAL(12,2)"},
+    {"id": "RED-04", "applies": false, "details": "非 MySQL 库,不适用"},
+    {"id": "RED-05", "applies": true, "passed": true, "details": "每个二级索引回指 access pattern"},
+    {"id": "RED-06", "applies": true, "passed": true, "details": "evolution 有 expand-contract 与锁评估"},
+    {"id": "RED-07", "applies": true, "passed": true, "details": "FK/UNIQUE/CHECK/NOT NULL 进库"}
+  ],
+  "strengths": ["实体守恒清晰,索引依据充分"],
+  "critical_issues": [],
+  "warnings": [],
+  "required_changes": [],
+  "evidence_gaps": [],
+  "confidence": "high"
+}

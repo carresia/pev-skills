@@ -1,0 +1,183 @@
+{
+  "status": "completed",
+  "evidence": [
+    {"claim": "TASK-1.2 依据契约 C3 的 POST /orders 端点定义", "type": "FACT",
+     "evidence": "api/output/D1/contracts.md C3", "confidence": "high"},
+    {"claim": "TASK-1.1 建表依据 orders/order_items 的 DDL", "type": "FACT",
+     "evidence": "db/output/D1/orders-schema.md orders/order_items 节", "confidence": "high"},
+    {"claim": "migration 脚手架登记为工程支撑项(空仓库无任何迁移基建)", "type": "INFERENCE",
+     "evidence": "代码库无 migrations/ 目录、package.json 无迁移依赖", "confidence": "high"},
+    {"claim": "校验规则独立成任务而非并入创建端点,用户在预览时拍板", "type": "DECISION",
+     "evidence": "01-artifact decisions#d1", "confidence": "high"}
+  ],
+  "decisions": [
+    "d1: 校验规则独立成 TASK-1.3(用户预览精修)"
+  ],
+  "artifact": {
+    "inventory": [
+      {"id": "INV-1", "kind": "architecture_module", "title": "M1 订单模块",
+       "anchor": "arch/output/architecture.md 模块表 M1 行", "in_scope": true},
+      {"id": "INV-2", "kind": "api_contract", "title": "C3 订单契约(POST/GET /orders)",
+       "anchor": "api/output/D1/contracts.md C3", "in_scope": true},
+      {"id": "INV-3", "kind": "db_object", "title": "orders / order_items 两表",
+       "anchor": "db/output/D1/orders-schema.md", "in_scope": true},
+      {"id": "INV-4", "kind": "engineering_item", "title": "migration 脚手架",
+       "anchor": "01-artifact evidence#INFERENCE-3", "in_scope": true},
+      {"id": "INV-5", "kind": "module_capability", "title": "创建订单含金额/库存校验",
+       "anchor": "module/output/M1/module-detail.md exposes 节", "in_scope": true}
+    ],
+    "phases": [
+      {
+        "id": "PHASE-1",
+        "title": "订单基础(可下单)",
+        "objective": "用户可在页面完成一次下单,数据落库",
+        "tasks": [
+          {
+            "id": "TASK-1.1",
+            "title": "orders/order_items 建表 migration",
+            "description": "按 DDL 建 orders 与 order_items 两表;同时搭起 migration 脚手架(up/down 模板与执行脚本),后续迁移复用。不改业务代码。",
+            "size": "XS",
+            "files_touched": ["migrations/0001_create_orders.sql"],
+            "acceptance_criteria": [
+              "migration up 后 orders/order_items 两表存在且列类型与 DDL 一致",
+              "migration down 可完整回滚"
+            ],
+            "verification": [
+              {"how": "npm run db:migrate && npm run db:rollback", "kind": "build",
+               "expectation": "两命令均退出码 0,回滚后表消失"}
+            ],
+            "implements": ["INV-3", "INV-4"],
+            "dependencies": [],
+            "trace": "db/output/D1/orders-schema.md orders/order_items 节"
+          },
+          {
+            "id": "TASK-1.2",
+            "title": "POST /orders 创建订单端点",
+            "description": "按契约 C3 实现 POST /orders:请求/响应类型、错误码(400 参数/409 库存不足/5xx)。不含校验规则本身(见 TASK-1.3)。",
+            "size": "S",
+            "files_touched": ["src/api/orders.ts", "src/api/types/order.ts"],
+            "acceptance_criteria": [
+              "正常请求返回 201 与订单体",
+              "参数错误返回 400,库存不足返回 409,错误体符合契约错误模型",
+              "契约测试全绿"
+            ],
+            "verification": [
+              {"how": "npm test -- --grep 'POST /orders'", "kind": "test",
+               "expectation": "契约用例全部通过"}
+            ],
+            "implements": ["INV-2"],
+            "dependencies": ["TASK-1.1"],
+            "parallel_group": "g1",
+            "trace": "api/output/D1/contracts.md C3"
+          },
+          {
+            "id": "TASK-1.3",
+            "title": "订单校验规则(金额/库存边界)",
+            "description": "实现创建订单的校验:金额非负、数量上下限、库存扣减边界。作为可复用模块供端点调用,不写路由逻辑。",
+            "size": "S",
+            "files_touched": ["src/domain/orderValidator.ts", "src/domain/orderValidator.test.ts"],
+            "acceptance_criteria": [
+              "金额为负、数量超上限各自返回明确的校验错误",
+              "边界值(0、上限值本身)行为符合契约 C3 的边界定义",
+              "单测覆盖全部等价类"
+            ],
+            "verification": [
+              {"how": "npm test -- --grep orderValidator", "kind": "test",
+               "expectation": "全部通过"}
+            ],
+            "implements": ["INV-5"],
+            "dependencies": ["TASK-1.1"],
+            "parallel_group": "g1",
+            "trace": "module/output/M1/module-detail.md exposes 节"
+          },
+          {
+            "id": "TASK-1.4",
+            "title": "下单页面与提交",
+            "description": "Web 下单页:表单、提交调用 POST /orders、成功/失败态展示。接 TASK-1.3 的校验错误展示。",
+            "size": "M",
+            "files_touched": ["web/src/pages/OrderForm.tsx", "web/src/api/client.ts", "web/src/hooks/useOrder.ts"],
+            "acceptance_criteria": [
+              "填写合法数据提交后展示成功态与订单号",
+              "400/409 错误在表单上按字段提示",
+              "构建通过且页面无控制台错误"
+            ],
+            "verification": [
+              {"how": "npm run build", "kind": "build", "expectation": "零错误"},
+              {"how": "浏览器手动下单走通(合法+库存不足各一次)", "kind": "manual",
+               "expectation": "成功态/错误提示符合验收描述"}
+            ],
+            "implements": ["INV-1"],
+            "dependencies": ["TASK-1.2"],
+            "trace": "arch/output/architecture.md 模块表 M1 行"
+          }
+        ],
+        "checkpoint": {
+          "checks": [
+            "npm test 全绿",
+            "npm run build 通过",
+            "浏览器完成一次端到端下单(建库→提交→落库)"
+          ],
+          "review_with_human": true
+        }
+      },
+      {
+        "id": "PHASE-2",
+        "title": "订单查询",
+        "objective": "用户可查看订单列表",
+        "tasks": [
+          {
+            "id": "TASK-2.1",
+            "title": "GET /orders 查询端点",
+            "description": "按契约 C3 实现列表查询:分页参数、排序、空结果语义。复用 TASK-1.1 的表与 TASK-1.3 的类型。",
+            "size": "S",
+            "files_touched": ["src/api/ordersQuery.ts", "src/api/types/query.ts"],
+            "acceptance_criteria": [
+              "分页参数生效且越界返回空列表而非错误",
+              "默认排序与契约一致",
+              "契约测试全绿"
+            ],
+            "verification": [
+              {"how": "npm test -- --grep 'GET /orders'", "kind": "test",
+               "expectation": "契约用例全部通过"}
+            ],
+            "implements": ["INV-2"],
+            "dependencies": ["TASK-1.1"],
+            "trace": "api/output/D1/contracts.md C3"
+          },
+          {
+            "id": "TASK-2.2",
+            "title": "订单列表页",
+            "description": "订单列表页:调用 GET /orders、分页控件、空态展示。",
+            "size": "M",
+            "files_touched": ["web/src/pages/OrderList.tsx", "web/src/api/orderQueries.ts", "web/src/hooks/useOrders.ts"],
+            "acceptance_criteria": [
+              "列表渲染订单数据且分页可用",
+              "空结果显示空态而非报错",
+              "构建通过"
+            ],
+            "verification": [
+              {"how": "npm run build", "kind": "build", "expectation": "零错误"},
+              {"how": "浏览器查看列表(有数据+空数据各一次)", "kind": "manual",
+               "expectation": "分页与空态符合验收描述"}
+            ],
+            "implements": ["INV-1"],
+            "dependencies": ["TASK-2.1", "TASK-1.4"],
+            "trace": "arch/output/architecture.md 模块表 M1 行"
+          }
+        ],
+        "checkpoint": {
+          "checks": [
+            "npm test 全绿",
+            "下单→查询端到端流程可用"
+          ],
+          "review_with_human": false
+        }
+      }
+    ],
+    "risks": [
+      {"risk": "库存扣减并发冲突在 PHASE-1 未处理", "impact": "Medium",
+       "mitigation": "契约 C3 已定义 409 语义;乐观锁任务列入第二批拆解"}
+    ],
+    "open_questions": []
+  }
+}

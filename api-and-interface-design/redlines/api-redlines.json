@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "接口契约设计红线库(机制骨架):Verifier 在 verification.redlines 逐条处置,适用(applies=true)且未通过(passed=false)时不得判 PASS。红线独立于 7 维评分,不可被分数抵消。可插拔:项目/组织可按需增删条目,id 需唯一且稳定。",
+  "redlines": [
+    {
+      "id": "RED-01",
+      "title": "契约守恒:能力/操作/交互不越上游声明",
+      "category": "conformance",
+      "applies_when": "存在契约设计(恒适用)",
+      "check": "covered_capabilities ⊆ owner_module 的上游快照 exposes;interaction_commitments ⊆ 快照交互且参与方对齐;有无绕开声明交互的隐式通道(私自端点/旁路能力)",
+      "pass_criterion": "能力与交互全部守恒且无隐式越界;需要越界的需求已走三选一,不在契约层私自解决",
+      "fail_example": "契约里出现 /api/admin/reindex 端点,上游任何模块都没声明该能力"
+    },
+    {
+      "id": "RED-02",
+      "title": "不做上下游的活",
+      "category": "scope",
+      "applies_when": "存在契约设计(恒适用)",
+      "check": "产物中是否出现实现代码、DDL/表结构、测试代码、文件级任务列表;是否重新定义模块边界/能力暴露/交互声明",
+      "pass_criterion": "止于契约;实现/建库/任务拆解只进 downstream_deliverables;边界与能力以上游声明为准未改动",
+      "fail_example": "契约文档里写出建表 SQL 和 handler 伪代码"
+    },
+    {
+      "id": "RED-03",
+      "title": "错误语义统一",
+      "category": "consistency",
+      "applies_when": "存在契约设计(恒适用)",
+      "check": "各契约面是否同一错误模型(策略+code 表);同一错误跨操作是否同码;detail 模式 error_model 是否落到 code 表与示例",
+      "pass_criterion": "全契约同一错误模型且 code 表具体;混用模式(一处抛异常一处返回包裹体)不允许",
+      "fail_example": "订单创建返回 422+结构化体,订单删除却返回 200+body 里的 error 字段"
+    },
+    {
+      "id": "RED-04",
+      "title": "兼容性交代:版本策略与弃用路径",
+      "category": "compatibility",
+      "applies_when": "detail 模式(恒适用);brief 模式按存在的兼容声明适用",
+      "check": "detail 契约是否有 versioning(策略+什么算破坏性变更+弃用路径);列表操作是否有分页;上游标幂等的交互是否有幂等交代",
+      "pass_criterion": "版本与兼容规则具体;破坏性变更有弃用路径;列表有分页;幂等逐条有交代",
+      "fail_example": "对外 REST 契约无任何版本策略;列表端点全量返回;上游标 idempotency=required 的创建操作无幂等键"
+    },
+    {
+      "id": "RED-05",
+      "title": "不泄漏实现:响应不含内部细节",
+      "category": "information_hiding",
+      "applies_when": "存在响应/事件载荷定义(恒适用)",
+      "check": "响应/载荷是否含内部字段(表名/内部 id/内部状态机枚举)、堆栈、内部错误信息、实现提示(时间戳精度/分页内部游标泄漏存储结构)",
+      "pass_criterion": "载荷只含契约承诺的领域字段;错误响应不暴露内部细节;可观察行为要么承诺要么收敛",
+      "fail_example": "错误响应返回数据库异常堆栈;订单响应含内部表主键 internal_order_pk"
+    }
+  ]
+}

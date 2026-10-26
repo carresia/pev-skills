@@ -1,0 +1,21 @@
+{
+  "objective": {"goal": "把订单模块的架构与设计产物拆为可执行任务清单", "deadline": null},
+  "arch_source": ".pev/prd-2026-10-01/arch/output/architecture.md",
+  "aux_sources": [
+    {"kind": "module_design", "path": ".pev/prd-2026-10-01/module/output/M1/module-detail.md"},
+    {"kind": "api_contract", "path": ".pev/prd-2026-10-01/api/output/D1/contracts.md"},
+    {"kind": "db_schema", "path": ".pev/prd-2026-10-01/db/output/D1/orders-schema.md"}
+  ],
+  "mode": "design",
+  "status": "COMPLETE",
+  "iteration": 1,
+  "max_iterations": 5,
+  "plans": ["01-plan.json"],
+  "artifacts": ["01-artifact.json"],
+  "evidence": [
+    {"claim": "任务范围覆盖架构模块表 M1 订单模块的全部声明能力", "type": "FACT",
+     "evidence": "arch/output/architecture.md 模块表 M1 行", "confidence": "high"},
+    {"claim": "纵切优先:PHASE-1 交付可下单的端到端路径而非全部数据层", "type": "DECISION",
+     "evidence": "01-plan understanding(策略声明)", "confidence": "high"}
+  ]
+}

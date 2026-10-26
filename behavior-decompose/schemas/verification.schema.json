@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification",
+  "type": "object",
+  "required": ["verdict", "scores", "coverage", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]},
+    "scores": {
+      "type": "object",
+      "description": "7 维评分,维度与 rubrics/decomposition-review.md 一致,各 1-5",
+      "required": ["coverage", "granularity", "hierarchy", "completeness", "actionability", "scenario_coverage", "traceability"],
+      "properties": {
+        "coverage": {"type": "integer", "minimum": 1, "maximum": 5},
+        "granularity": {"type": "integer", "minimum": 1, "maximum": 5},
+        "hierarchy": {"type": "integer", "minimum": 1, "maximum": 5},
+        "completeness": {"type": "integer", "minimum": 1, "maximum": 5},
+        "actionability": {"type": "integer", "minimum": 1, "maximum": 5},
+        "scenario_coverage": {"type": "integer", "minimum": 1, "maximum": 5},
+        "traceability": {"type": "integer", "minimum": 1, "maximum": 5}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "两项门禁数字,PASS 需要 scenario_category_pct ≥ 90 且 critical_risk_pct = 100",
+      "required": ["scenario_category_pct", "critical_risk_pct"],
+      "properties": {
+        "scenario_category_pct": {"type": "number", "minimum": 0, "maximum": 100, "description": "适用场景类别覆盖率"},
+        "critical_risk_pct": {"type": "number", "minimum": 0, "maximum": 100, "description": "P0/P1 六大风险类(安全/授权/资金/隐私/不可逆/数据完整性)覆盖率"},
+        "notes": {"type": "string", "description": "计算口径与未覆盖项说明"}
+      }
+    },
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["what", "why", "change"],
+        "properties": {
+          "what": {"type": "string", "description": "What is wrong"},
+          "why": {"type": "string", "description": "Why it matters"},
+          "change": {"type": "string", "description": "What must change"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV State",
+  "type": "object",
+  "required": ["objective", "status", "iteration", "max_iterations"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["INIT", "PLANNING", "EXECUTING", "VERIFYING", "COMPLETE", "WAITING_FOR_INPUT", "STOPPED"]
+    },
+    "resume_to": {
+      "type": "string",
+      "description": "仅 status=WAITING_FOR_INPUT 时存在:用户答复后应回到的阶段(由 validate.py 强制)",
+      "enum": ["PLANNING", "EXECUTING", "VERIFYING"]
+    },
+    "objective": {
+      "type": "object",
+      "required": ["goal"],
+      "properties": {
+        "goal": {"type": "string"},
+        "target_metric": {"type": "string"},
+        "baseline": {"type": ["number", "string", "null"], "description": "目标指标当前基线(数值或现状描述),未知为 null"},
+        "target_value": {"type": ["number", "null"]},
+        "deadline": {"type": ["string", "null"]}
+      }
+    },
+    "business_context": {
+      "type": "object",
+      "properties": {
+        "product": {"type": "string"},
+        "users": {"type": "array", "items": {"type": "string"}},
+        "business_model": {"type": "string"},
+        "constraints": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "known": {"type": "array", "items": {"type": "string"}, "description": "已确认的背景事实,一句话一条;分析论断走 evidence"},
+    "assumptions": {"type": "array", "items": {"type": "string"}, "description": "未验证的假设与推断,待证据升级或推翻"},
+    "evidence": {
+      "type": "array",
+      "description": "Evidence Ledger",
+      "items": {
+        "type": "object",
+        "required": ["id", "claim", "type", "confidence"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^E[1-9][0-9]*$", "description": "如 E1,全局唯一,供机会卡片与模板引用"},
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "metrics": {"type": "array"},
+    "hypotheses": {"type": "array"},
+    "opportunities": {"type": "array"},
+    "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R4 对账)"},
+    "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R4 对账)"},
+    "iteration": {"type": "integer", "minimum": 0},
+    "max_iterations": {"type": "integer", "minimum": 1, "default": 5},
+    "transitions": {
+      "type": "array",
+      "description": "追加式转移日志,仅由 transition.py 写入;不进入 state 投影",
+      "items": {
+        "type": "object",
+        "required": ["event", "from", "to", "from_iteration", "to_iteration", "at"],
+        "properties": {
+          "event": {"type": "string"},
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "from_iteration": {"type": "integer", "minimum": 0},
+          "to_iteration": {"type": "integer", "minimum": 0},
+          "at": {"type": "string"},
+          "ref_sha256": {"type": ["string", "null"]},
+          "param": {}
+        }
+      }
+    }
+  }
+}

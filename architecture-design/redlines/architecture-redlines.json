@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "架构设计红线库(机制骨架):Verifier 在 verification.redlines 逐条处置,适用(applies=true)且未通过(passed=false)时不得判 PASS。红线独立于 7 维评分,不可被分数抵消。可插拔:项目/组织可按需增删条目,id 需唯一且稳定。",
+  "redlines": [
+    {
+      "id": "RED-01",
+      "title": "核心域不得依赖外围/交付机制",
+      "category": "boundary",
+      "applies_when": "存在核心业务域与外围(框架/交付/基础设施)分层",
+      "check": "依赖方向是否出现业务核心依赖框架/交付机制的方向倒挂",
+      "pass_criterion": "核心域不依赖外围;依赖只指向内层",
+      "fail_example": "订单核心模块 depends_on 鉴权网关或 HTTP 框架"
+    },
+    {
+      "id": "RED-02",
+      "title": "无主数据",
+      "category": "ownership",
+      "applies_when": "存在需要持久化的核心数据",
+      "check": "每个核心数据是否唯一 owner 且 owner 在写路径;非 owner 共享写是否显式处置",
+      "pass_criterion": "每数据唯一 owner,owner 参与写方;非 owner 写方要么改设计要么进 risks 并给理由",
+      "fail_example": "订单数据被两个模块共享写且无归属"
+    },
+    {
+      "id": "RED-03",
+      "title": "不可逆/高成本/改边界决策必须有用户 DECISION 锚点",
+      "category": "traceability",
+      "applies_when": "存在改变模块边界/外部契约/部署形态或引入重大复杂度的决策",
+      "check": "这类决策是否都有 decisions#<id> 锚点且 evidence 可解析",
+      "pass_criterion": "每个此类决策对应一条 DECISION 且锚点可解析",
+      "fail_example": "引入微服务但无用户拍板记录"
+    },
+    {
+      "id": "RED-04",
+      "title": "复杂度机制必须点名可溯源的真实问题",
+      "category": "simplicity",
+      "applies_when": "引入队列/缓存/微服务/CQRS/事件溯源/多库/分布式锁",
+      "check": "每个复杂度机制是否点名它解决的上游可溯源真实问题;更简方案是否被排除",
+      "pass_criterion": "每个机制有真实问题背书 + simpler_alternative 已记录排除理由",
+      "fail_example": "\"为未来扩展引入消息队列\"且无排除同步方案记录"
+    },
+    {
+      "id": "RED-05",
+      "title": "失败/迁移/容量有交代(不贰过红线)",
+      "category": "reliability",
+      "applies_when": "存在外部依赖、持久化、跨模块异步或需要升级的形态",
+      "check": "外部依赖挂了/消息重复/延迟怎么办;schema/发布可回滚吗;什么负载下失效",
+      "pass_criterion": "对抗 7 维主路径与长尾场景均有交代,回滚策略明确、容量峰值是否落在规划期内有判断",
+      "fail_example": "最终一致泄漏到用户可见行为且上游未批准、无回滚策略"
+    }
+  ]
+}

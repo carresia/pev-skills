@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Verification",
+  "type": "object",
+  "required": ["verdict", "scores", "gates", "confidence"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]
+    },
+    "scores": {
+      "type": "object",
+      "description": "7 维各 1-5 分,判据见 rubrics/architecture-review.md",
+      "required": ["upstream_coverage", "boundary_clarity", "ownership", "tradeoff_honesty", "failure_readiness", "simplicity", "traceability"],
+      "properties": {
+        "upstream_coverage": {"type": "integer", "minimum": 1, "maximum": 5},
+        "boundary_clarity": {"type": "integer", "minimum": 1, "maximum": 5},
+        "ownership": {"type": "integer", "minimum": 1, "maximum": 5},
+        "tradeoff_honesty": {"type": "integer", "minimum": 1, "maximum": 5},
+        "failure_readiness": {"type": "integer", "minimum": 1, "maximum": 5},
+        "simplicity": {"type": "integer", "minimum": 1, "maximum": 5},
+        "traceability": {"type": "integer", "minimum": 1, "maximum": 5}
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "四个门禁布尔照抄 validate.py 打印的值(R6 逐位比对;按 deliverable_kind 各自计算,不适用时脚本按 true 计并注明)",
+      "required": ["dependency_acyclic", "unique_owners", "upstream_mapped", "findings_disposed", "notes"],
+      "properties": {
+        "dependency_acyclic": {"type": "boolean"},
+        "unique_owners": {"type": "boolean"},
+        "upstream_mapped": {"type": "boolean"},
+        "findings_disposed": {"type": "boolean"},
+        "notes": {"type": "string", "description": "对四值的质疑与补充(如:结构合法但方向倒挂,交 boundary_clarity 维度扣分)"}
+      }
+    },
+    "strengths": {"type": "array", "items": {"type": "string"}},
+    "critical_issues": {
+      "type": "array",
+      "description": "verdict != PASS 时每条写清 What is wrong / Why it matters / What must change",
+      "items": {"type": "string"}
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "required_changes": {"type": "array", "items": {"type": "string"}},
+    "evidence_gaps": {"type": "array", "items": {"type": "string"}},
+    "findings": {
+      "type": "array",
+      "description": "结构化评审发现(反向追溯):每条携带 affected_upstream_items 回指上游条目,便于 REVISE 精确定位卡住的需求。与 critical_issues/required_changes 的文本发现互补,新产物优先用本字段",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "what", "why", "what_must_change", "affected_upstream_items"],
+        "properties": {
+          "id": {"type": "string"},
+          "severity": {"type": "string", "enum": ["BLOCKING", "HIGH", "MEDIUM", "LOW"]},
+          "what": {"type": "string"},
+          "why": {"type": "string"},
+          "what_must_change": {"type": "string"},
+          "affected_upstream_items": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+          "dimension": {"type": "string"}
+        }
+      }
+    },
+    "redlines": {
+      "type": "array",
+      "description": "红线处置(独立于 7 维评分):每条红线 id 来自 redlines/architecture-redlines.json;applies=true 且 passed=false 时不得判 PASS",
+      "items": {
+        "type": "object",
+        "required": ["id", "applies", "details"],
+        "properties": {
+          "id": {"type": "string"},
+          "applies": {"type": "boolean"},
+          "passed": {"type": "boolean"},
+          "details": {"type": "string"}
+        }
+      }
+    },
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "goal": "把订单模块(M1)的 owns_data 展开为单库 PostgreSQL schema",
+  "understanding": "M1 拥有 orders 与 order_items,交互 I1(用户下单)幂等 required,需 schema 承接",
+  "known": ["M1 owns_data: orders 订单 / order_items 订单明细", "I1 幂等 required"],
+  "unknown": [],
+  "assumptions": ["单库写入,无分片计划"],
+  "plan": [
+    {
+      "id": "step_1",
+      "objective": "条目化 M1 的 owns_data 与 I1 交互",
+      "action": "survey_upstream",
+      "inputs": ["module/output/M1/module-detail.md"],
+      "expected_output": "upstream_snapshot + upstream_items",
+      "success_criteria": "owns_data 与交互逐条入快照"
+    },
+    {
+      "id": "step_2",
+      "objective": "设计 D1 的实体关系与表结构",
+      "action": "design_stores",
+      "inputs": ["upstream_snapshot"],
+      "expected_output": "D1 的表/索引/约束/演进",
+      "success_criteria": "表回指实体,索引回指 access pattern"
+    },
+    {
+      "id": "step_3",
+      "objective": "跨库一致性自查",
+      "action": "cross_check",
+      "inputs": ["D1 设计"],
+      "expected_output": "cross_check 结论",
+      "success_criteria": "无命名漂移/ID 不一致"
+    },
+    {
+      "id": "step_4",
+      "objective": "聚合与交付",
+      "action": "draft",
+      "inputs": ["D1 设计", "cross_check 结论"],
+      "expected_output": "artifact + downstream_deliverables",
+      "success_criteria": "全部必填块填齐"
+    }
+  ],
+  "final_deliverable": "D1 的 schema 文档与 downstream_deliverables",
+  "stop_conditions": ["用户 done"]
+}

@@ -1,0 +1,23 @@
+{
+  "objective": {"goal": "把订单模块(M1)的 owns_data 展开为单库 PostgreSQL schema"},
+  "upstream_source": "module/output/M1/module-detail.md",
+  "upstream_kind": "module_design",
+  "mode": "design",
+  "status": "COMPLETE",
+  "iteration": 1,
+  "max_iterations": 5,
+  "stores": [
+    {"id": "D1", "kind": "postgresql", "design_status": "done", "review_status": "pass"}
+  ],
+  "cross": {"status": "passed"},
+  "plans": ["01-plan.json"],
+  "artifacts": ["01-artifact.json"],
+  "evidence": [
+    {
+      "claim": "上游声明 M1 拥有 orders 与 order_items 数据,交互 I1 幂等要求 required",
+      "type": "FACT",
+      "evidence": "module/output/M1/module-detail.md owned_data_handling 节",
+      "confidence": "high"
+    }
+  ]
+}

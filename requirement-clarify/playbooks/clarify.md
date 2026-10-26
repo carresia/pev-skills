@@ -1,0 +1,26 @@
+# Playbook: Clarify(PRD → 工程 Spec)
+
+## 适用
+
+上游已有业务 PRD(`.pev/<轮次>/pm/output/prd.md` 或用户提供),需澄清为工程 Spec。
+
+## 前置条件
+
+`state.prd_source` 存在且可读。无 PRD → 分流:还没 PRD 用 `product-manager`,
+从零澄清写 spec 用 `spec-driven-development`,本 skill 不启动。
+
+## Plan 骨架
+
+1. `interrogate_value` — 价值性问题一批(为什么做/价值假设/不做会怎样/成功长什么样),锚 PRD §背景/§目标 与上游 Evidence Ledger。
+2. `interrogate_ambiguity` — 逐章扫描落地模糊地带(业务规则/权限与状态/异常与边界/数据口径/范围),一批或多批。
+3. `draft` — 闭环答案聚合为 Spec 正文,按 `templates/spec.md`:产品定义引用不重写,澄清结论逐条标来源。
+
+## 最终交付
+
+`templates/spec.md`。
+
+## Verifier 侧重
+
+- 覆盖完备/可落地必查:PRD §5 每条 In Scope 与 §6 每项数据需求 → Spec 工程落点,缺 → REVISE。
+- §6 数据需求必须已转化为工程项:需新增的埋点/口径未列入工程范围 → REVISE。
+- 溯源必查:答案无 FACT/DECISION 来源 → 记 evidence_gaps,不可作为 Spec 依据。

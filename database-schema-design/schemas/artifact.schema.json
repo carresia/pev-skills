@@ -1,0 +1,359 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PEV Artifact (database-schema-design)",
+  "type": "object",
+  "required": ["status", "evidence", "artifact"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "replan_required", "blocked"]
+    },
+    "unresolved": {
+      "type": "array",
+      "description": "溯不到依据或需越出上游声明的缺口;非空时 status 应为 blocked",
+      "items": {"type": "string"}
+    },
+    "decisions": {
+      "type": "array",
+      "description": "用户拍板与精修记录(含三选一结果),每条对应 Ledger 一条 DECISION",
+      "items": {
+        "type": "object",
+        "required": ["id", "decision"],
+        "properties": {
+          "id": {"type": "string", "description": "拍板锚点,如 d2;evidence 引用形如 01-artifact decisions#d2"},
+          "decision": {"type": "string"},
+          "context": {"type": "string"}
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "本迭代新增/修订的 Evidence Ledger 条目(与 state.evidence 同构)",
+      "items": {
+        "type": "object",
+        "required": ["claim", "type", "confidence"],
+        "properties": {
+          "claim": {"type": "string"},
+          "type": {"type": "string", "enum": ["FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN", "DECISION"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "source": {
+            "type": "object",
+            "description": "可选:证据的可定位来源(文件+摘录+摘要)。存在时 validate.py 回读校验新鲜度。path 为项目根目录(含 .pev 的目录)相对路径,或绝对路径",
+            "required": ["path", "excerpt"],
+            "properties": {
+              "path": {"type": "string"},
+              "locator": {"type": "string"},
+              "excerpt": {"type": "string"},
+              "digest": {"type": "string", "description": "sha256:<64位hex> 或 pending"}
+            }
+          }
+        }
+      }
+    },
+    "replan_reason": {
+      "type": "object",
+      "description": "status=replan_required/blocked 时必填(校验脚本强制)",
+      "properties": {
+        "problem": {"type": "string"},
+        "why_plan_invalid": {"type": "string"},
+        "new_information": {"type": "string"},
+        "recommended_replan": {"type": "string"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["deliverable_kind"],
+      "properties": {
+        "deliverable_kind": {
+          "type": "string",
+          "enum": ["db_schemas", "db_review"],
+          "description": "与 state.mode 对应:design→db_schemas(单文件承载全部目标库的设计),review→db_review(评审发现);各 kind 必填块由 validate.py 强制"
+        },
+        "input_summary": {
+          "type": "object",
+          "description": "survey_upstream 产出:上游声明条目化",
+          "properties": {
+            "goal": {"type": "string"},
+            "target_stores": {
+              "type": "array",
+              "description": "本轮设计的目标库 id(与 state.stores[] 一致)",
+              "items": {"type": "string"}
+            },
+            "upstream_snapshot": {
+              "type": "object",
+              "description": "上游声明的结构化快照(实体守恒与覆盖对账的机器基准);快照是否忠实由 Verifier 对照上游产物审",
+              "properties": {
+                "modules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "name", "owns_data"],
+                    "properties": {
+                      "id": {"type": "string", "description": "上游模块 id,如 M1(schema_request 时为口述需求范围建立的单模块)"},
+                      "name": {"type": "string"},
+                      "owns_data": {"type": "array", "items": {"type": "string"}},
+                      "exposes": {"type": "array", "items": {"type": "string"}}
+                    }
+                  }
+                },
+                "interactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "scenario", "from", "to"],
+                    "properties": {
+                      "id": {"type": "string", "description": "如 I1,勘察时编号,锚点为 scenario"},
+                      "scenario": {"type": "string"},
+                      "from": {"type": "string", "description": "模块 id 或 external:<名称>"},
+                      "to": {"type": "string"},
+                      "mode": {"type": "string", "enum": ["sync-call", "async-message", "data-flow"], "description": "交互方式(自上游交互声明抄——arch 关键交互表或 module 下游交付物;缺则省略)"},
+                      "consistency": {"type": "string"},
+                      "failure_handling": {"type": "string"},
+                      "idempotency": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            },
+            "upstream_items": {
+              "type": "array",
+              "description": "覆盖检查的分母:目标模块的每条数据条目(<mid>-D<n>)与每条涉及持久化的目标交互(In);声明漏项会被 Verifier 打回",
+              "items": {
+                "type": "object",
+                "required": ["id", "item", "anchor"],
+                "properties": {
+                  "id": {"type": "string", "description": "如 M1-D2、I3"},
+                  "item": {"type": "string"},
+                  "anchor": {"type": "string", "description": "上游产物锚点,如 module/output/M1/ owned_data_handling 节 或 arch 数据所有权表 M1 行;schema_request 时为用户口述/文档锚点"}
+                }
+              }
+            }
+          }
+        },
+        "codebase_fit": {
+          "type": "object",
+          "description": "survey_codebase 产出(仅既有库):当前模式/可复用约定/勿破坏边界/技术债/已知瓶颈",
+          "properties": {
+            "current_pattern": {"type": "string"},
+            "reuse_conventions": {"type": "array", "items": {"type": "string"}},
+            "do_not_break": {"type": "array", "items": {"type": "string"}},
+            "tech_debt": {"type": "array", "items": {"type": "string"}},
+            "known_bottlenecks": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "stores": {
+          "type": "array",
+          "description": "逐库设计(一个项目可一库或多库);实体/数据流守恒由 validate.py 强制",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "kind", "covered_entities", "access_patterns", "tables", "self_challenge"],
+            "properties": {
+              "id": {"type": "string", "description": "库 id,如 D1,不新造"},
+              "name": {"type": "string"},
+              "kind": {"type": "string", "enum": ["postgresql", "mysql", "mongodb"]},
+              "covered_entities": {
+                "type": "array",
+                "description": "本库承接的上游数据实体(可来自多个模块);每条必须 ∈ 上游快照任一模块的 owns_data(validate.py 强制);要存新数据 = 上游层缺口走三选一",
+                "items": {"type": "string"}
+              },
+              "environment": {
+                "type": "object",
+                "description": "存储环境与规模假设(门槛信息);dialect_version 与 scale 非空由 validate.py 强制(方言显式,通用 SQL 不存在)",
+                "required": ["dialect_version", "scale"],
+                "properties": {
+                  "dialect_version": {"type": "string", "description": "如 PostgreSQL 16 / MySQL 8.0 / MongoDB 7.0"},
+                  "charset": {"type": "string", "description": "如 utf8mb4;MySQL 必填语义由红线把守"},
+                  "scale": {"type": "string", "description": "行数量级/增长/读写比,如 日增 50 万,峰值读写 10:1"},
+                  "retention": {"type": "string", "description": "保留期与归档要求"},
+                  "multi_tenant": {"type": "string"}
+                }
+              },
+              "access_patterns": {
+                "type": "array",
+                "description": "本库的读写模式(最高频 3~5 个);是索引与 denorm 的依据分母,每库 ≥1(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "pattern"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 D1-A1,库内唯一"},
+                    "pattern": {"type": "string", "description": "读写模式描述"},
+                    "frequency": {"type": "string"},
+                    "query_shape": {"type": "string", "description": "查询形状(过滤/排序/聚合的列)"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "tables": {
+                "type": "array",
+                "description": "表/集合设计(mongodb 时为 collection 建模);关系型要求 columns/pk/constraints 非空,mongodb 要求 document_shape/validator 非空(validate.py 按 kind 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "name", "entity", "purpose"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 D1-T1,库内唯一"},
+                    "name": {"type": "string"},
+                    "entity": {"type": "string", "description": "回指本库 covered_entities 中的实体(validate.py 强制)——写不出实体背书的表该删"},
+                    "purpose": {"type": "string"},
+                    "columns": {"type": "string", "description": "列级定义(列名+类型+关键约束清单,DDL 级);关系型必须非空,mongodb 不用"},
+                    "pk": {"type": "string", "description": "主键策略 + WHY(如 BIGINT 自增:单库写入,无分片计划);关系型必须非空,mongodb 为 _id 策略(默认 ObjectId 或自定义)"},
+                    "constraints": {"type": "string", "description": "FK/UNIQUE/CHECK/NOT NULL 与 ON DELETE 策略;关系型必须非空,mongodb 不用"},
+                    "document_shape": {"type": "string", "description": "文档字段结构 + embed/reference 决策;仅 mongodb,必须非空(validate.py 强制)"},
+                    "validator": {"type": "string", "description": "$jsonSchema validator + validationLevel;仅 mongodb,必须非空(validate.py 强制)"},
+                    "existing_change": {"type": "string", "description": "既有表的变化:延续/新增/变更/废弃 + 迁移影响(改已有表时必填,由 Verifier 把守)"},
+                    "why": {"type": "string", "description": "非显然决策一行 WHY(如 BINARY(16) 存 UUIDv7:时间有序避免页分裂)"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "indexes": {
+                "type": "array",
+                "description": "二级索引;每个 serves 引用本库 access_patterns id,table 引用本库表 id(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "table", "definition", "serves"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 D1-I1"},
+                    "table": {"type": "string", "description": "本库 tables 的 id"},
+                    "definition": {"type": "string", "description": "索引定义(列+序+类型)"},
+                    "serves": {"type": "string", "description": "服务的 access_pattern id——无依据索引不许入库"},
+                    "why": {"type": "string"}
+                  }
+                }
+              },
+              "denormalization": {
+                "type": "array",
+                "description": "有依据的 denormalization;每个 serves 引用本库 access_patterns id(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["what", "serves", "sync_strategy"],
+                  "properties": {
+                    "what": {"type": "string", "description": "冗余了什么(哪张表冗余了哪个来源的什么列/聚合)"},
+                    "serves": {"type": "string", "description": "服务的 access_pattern id——无对应查询的 denorm 是纯负债"},
+                    "sync_strategy": {"type": "string", "description": "同步策略(触发时机/一致性窗口)"},
+                    "why": {"type": "string"}
+                  }
+                }
+              },
+              "data_flow_commitments": {
+                "type": "array",
+                "description": "本库承接的上游声明交互(涉及持久化的:outbox/幂等去重键/审计溯源);interaction 必须 ∈ 快照交互 id,且本库承接实体的归属模块是该交互的参与方(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["interaction", "role", "schema_handling"],
+                  "properties": {
+                    "interaction": {"type": "string", "description": "快照交互 id,如 I3"},
+                    "role": {"type": "string", "description": "承接实体归属模块在该交互中的角色(发起方/接收方)"},
+                    "schema_handling": {"type": "string", "description": "该交互在 schema 里以什么承接(如 outbox 表/消费去重唯一键)"},
+                    "trace": {"type": "string"}
+                  }
+                }
+              },
+              "evolution": {
+                "type": "object",
+                "description": "演进与迁移策略;必填且 strategy/compat_rules 非空(validate.py 强制)",
+                "required": ["strategy", "compat_rules"],
+                "properties": {
+                  "strategy": {"type": "string", "description": "迁移策略(如 expand-contract 优先,migration 工具与版本管理)"},
+                  "compat_rules": {"type": "string", "description": "什么算破坏性 schema 变更、锁影响评估约定、回滚原则(UP/DOWN 成对)"},
+                  "large_table_plan": {"type": "string", "description": "大表(千万行级)的分区/归档策略或明确 accepted_risk"}
+                }
+              },
+              "tradeoffs": {
+                "type": "array",
+                "description": "库关键取舍;cost 非空(validate.py 强制)",
+                "items": {
+                  "type": "object",
+                  "required": ["decision", "choice", "rationale", "cost"],
+                  "properties": {
+                    "id": {"type": "string", "description": "如 T1"},
+                    "decision": {"type": "string"},
+                    "choice": {"type": "string"},
+                    "rationale": {"type": "string"},
+                    "cost": {"type": "string", "description": "放弃的东西;必须具体,不接受空话(validate.py 查非空)"},
+                    "alternative": {"type": "string"}
+                  }
+                }
+              },
+              "self_challenge": {
+                "type": "array",
+                "description": "提交前的 7 维自查;7 维全齐、发现全处置(validate.py 强制)。自查不替代 Verifier 独立评审",
+                "items": {
+                  "type": "object",
+                  "required": ["dimension", "finding", "disposition"],
+                  "properties": {
+                    "dimension": {
+                      "type": "string",
+                      "enum": ["failure_modes", "consistency", "concurrency", "boundary_erosion", "misuse_potential", "compatibility", "simpler_alternative"]
+                    },
+                    "finding": {"type": "string", "description": "空字符串 = 该维无发现"},
+                    "disposition": {"type": "string", "enum": ["none", "fixed", "accepted_risk"], "description": "finding 为空时只能 none;非空时只能 fixed 或 accepted_risk"},
+                    "rationale": {"type": "string", "description": "accepted_risk 时必填(validate.py 强制)"}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "risks": {
+          "type": "array",
+          "description": "接受的风险:对抗审查中存活且明确接受的部分",
+          "items": {
+            "type": "object",
+            "required": ["risk", "impact", "mitigation"],
+            "properties": {
+              "id": {"type": "string"},
+              "risk": {"type": "string"},
+              "impact": {"type": "string"},
+              "mitigation": {"type": "string"},
+              "to_validate": {"type": "string"}
+            }
+          }
+        },
+        "upstream_mapping": {
+          "type": "array",
+          "description": "上游条目(数据实体/交互)→ 库落点;与 upstream_items 双向对账(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["upstream_item", "store_id", "trace"],
+            "properties": {
+              "upstream_item": {"type": "string", "description": "upstream_items 的 id,如 M1-D2、I3"},
+              "store_id": {"type": "string", "description": "承载它的库 id"},
+              "trace": {"type": "string"}
+            }
+          }
+        },
+        "downstream_deliverables": {
+          "type": "object",
+          "description": "给下游 skills 的输入清单(应填,Verifier 审完整性)",
+          "properties": {
+            "incremental_implementation": {"type": "array", "items": {"type": "string"}},
+            "test_driven_development": {"type": "array", "items": {"type": "string"}},
+            "planning_and_task_breakdown": {"type": "array", "items": {"type": "string"}},
+            "documentation_and_adrs": {"type": "array", "items": {"type": "string"}},
+            "c4_architecture": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "review_findings": {
+          "type": "array",
+          "description": "评审发现(db_review kind 必填);对抗 7 维全齐、非空 finding 带 severity+锚点(validate.py 强制)",
+          "items": {
+            "type": "object",
+            "required": ["dimension", "finding", "severity"],
+            "properties": {
+              "id": {"type": "string", "description": "如 F1"},
+              "dimension": {
+                "type": "string",
+                "enum": ["failure_modes", "consistency", "concurrency", "boundary_erosion", "misuse_potential", "compatibility", "simpler_alternative"]
+              },
+              "finding": {"type": "string", "description": "空字符串 = 该维扫过无发现(仍须占位,证明扫过)"},
+              "severity": {"type": "string", "enum": ["NONE", "LOW", "MEDIUM", "HIGH", "BLOCKING"], "description": "finding 为空时只能 NONE"},
+              "evidence_anchor": {"type": "string", "description": "被评审 schema 文档中的位置/表 id/列名,非空 finding 必填(validate.py 强制)"},
+              "recommendation": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

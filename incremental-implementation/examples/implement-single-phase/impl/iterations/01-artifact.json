@@ -1,0 +1,78 @@
+{
+  "status": "completed",
+  "decisions": [
+    "d1: TASK-1.2 允许改动 src/middleware/auth.ts(校验中间件挂载),偏离批准"
+  ],
+  "evidence": [
+    {"claim": "TASK-1.1 完成,npm test orders 相关全绿", "type": "FACT",
+     "evidence": "commit a1b2c3d 'feat(orders): add order model and repository';npm test 输出 'orders model: 3 passed'", "confidence": "high"},
+    {"claim": "TASK-1.2 完成,验收两条均有测试证据", "type": "FACT",
+     "evidence": "commit d7e8f9a 'feat(orders): POST /orders endpoint per contract C3';npm test -- --grep orders 输出 'Tests: 8 passed (8)'", "confidence": "high"},
+    {"claim": "TASK-1.2 偏离改动 src/middleware/auth.ts 经用户批准", "type": "DECISION",
+     "evidence": "01-artifact decisions#d1", "confidence": "high"}
+  ],
+  "artifact": {
+    "baseline": {
+      "branch": "main",
+      "commit": "e4f5a6b",
+      "checks": [
+        {"what": "npm test", "result": "pass"},
+        {"what": "npm run build", "result": "pass"}
+      ]
+    },
+    "task_registry": [
+      {
+        "id": "TASK-1.1",
+        "title": "建 orders 模型与仓储",
+        "files_touched": ["src/orders/model.ts"],
+        "acceptance_criteria": ["模型字段与 DDL 一一对应"],
+        "dependencies": [],
+        "trace": "tasks/iterations/01-artifact.json PHASE-1 TASK-1.1"
+      },
+      {
+        "id": "TASK-1.2",
+        "title": "实现 POST /orders 端点",
+        "files_touched": ["src/orders/router.ts", "test/orders.test.ts"],
+        "acceptance_criteria": ["201 返回订单体与契约 C3 一致", "空 title 返回 400"],
+        "dependencies": ["TASK-1.1"],
+        "trace": "tasks/iterations/01-artifact.json PHASE-1 TASK-1.2"
+      }
+    ],
+    "task_records": [
+      {
+        "id": "TASK-1.1",
+        "status": "done",
+        "commits": ["a1b2c3d"],
+        "files_changed": ["src/orders/model.ts"],
+        "tests": [
+          {"how": "npm test -- --grep orders", "kind": "test", "result": "pass",
+           "evidence": "vitest 输出 'orders model: 3 passed (3)',字段断言覆盖 DDL 全部 7 列"}
+        ],
+        "acceptance_results": [
+          {"criterion": "模型字段与 DDL 一一对应", "met": true,
+           "evidence": "test/orders.model.test.ts 'maps all DDL columns' 通过 @ a1b2c3d"}
+        ]
+      },
+      {
+        "id": "TASK-1.2",
+        "status": "done",
+        "commits": ["d7e8f9a"],
+        "files_changed": ["src/orders/router.ts", "test/orders.test.ts", "src/middleware/auth.ts"],
+        "deviations": [
+          {"path": "src/middleware/auth.ts",
+           "why": "路由挂载点在此中间件之后,新增路由需在挂载表中登记一行;已经用户批准(decisions#d1)"}
+        ],
+        "tests": [
+          {"how": "npm test -- --grep orders", "kind": "test", "result": "pass",
+           "evidence": "vitest 输出 'Tests: 8 passed (8)',含 '201 returns order body per C3' 与 '400 on empty title'"}
+        ],
+        "acceptance_results": [
+          {"criterion": "201 返回订单体与契约 C3 一致", "met": true,
+           "evidence": "test/orders.test.ts '201 returns order body per C3' 断言字段逐一对照契约 @ d7e8f9a"},
+          {"criterion": "空 title 返回 400", "met": true,
+           "evidence": "test/orders.test.ts '400 on empty title' 通过 @ d7e8f9a"}
+        ]
+      }
+    ]
+  }
+}

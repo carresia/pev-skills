@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "description": "模块设计红线库(机制骨架):Verifier 在 verification.redlines 逐条处置,适用(applies=true)且未通过(passed=false)时不得判 PASS。红线独立于 7 维评分,不可被分数抵消。可插拔:项目/组织可按需增删条目,id 需唯一且稳定。",
+  "redlines": [
+    {
+      "id": "RED-01",
+      "title": "边界守恒:依赖/数据/暴露不越架构声明",
+      "category": "conformance",
+      "applies_when": "存在模块内部设计(恒适用)",
+      "check": "depends_on ⊆ 架构声明;owned_data_handling ⊆ 架构 owns_data;exposes_realization ⊆ 架构 exposes;有无绕开 exposes 的隐式通道(共享存储/时序耦合/读别人的表)",
+      "pass_criterion": "三项全部守恒且无隐式越界;需要越界的需求已走三选一,不在模块层私自解决",
+      "fail_example": "内部实现直接读 M2 的库表完成订单查询,架构里 M1 并不依赖 M2"
+    },
+    {
+      "id": "RED-02",
+      "title": "不做系统级与下游的活",
+      "category": "scope",
+      "applies_when": "存在模块内部设计(恒适用)",
+      "check": "产物中是否出现完整 API 契约、DDL/表结构、文件级任务列表、部署图;是否重新定义模块边界/暴露/所有权",
+      "pass_criterion": "止于模块内部;接口契约/建库/任务拆解只进 downstream_deliverables;边界与暴露以架构为准未改动",
+      "fail_example": "模块设计里写出了完整 REST 端点定义与建表 SQL"
+    },
+    {
+      "id": "RED-03",
+      "title": "信息隐藏与对外表面最小",
+      "category": "cohesion",
+      "applies_when": "模块含多个内部组件(恒适用)",
+      "check": "内部组件是否直接服务模块外的参与方;模块内数据是否泄漏给其他模块;组件 hides 是否写的是真实设计决策",
+      "pass_criterion": "外部只经架构声明的 exposes 触达本模块;组件边界按信息隐藏划分;hides 逐组件非空且非复述职责",
+      "fail_example": "其他模块直接调用 M1-C3 组件;hides 写的是'responsible for orders'(复述职责)"
+    },
+    {
+      "id": "RED-04",
+      "title": "内部复杂度必须点名可溯源的真实问题",
+      "category": "simplicity",
+      "applies_when": "引入模块内队列/缓存/状态机/后台任务/重试框架",
+      "check": "每个机制是否点名它解决的可溯源真实问题(架构声明或代码事实);更简单的内部结构是否被排除",
+      "pass_criterion": "每个机制有真实问题背书 + simpler_alternative 已记录排除理由",
+      "fail_example": "\"为灵活性引入内部事件总线\"且无排除直接调用的记录"
+    },
+    {
+      "id": "RED-05",
+      "title": "失败交代:DFX 落地且 FMEA 不走形式",
+      "category": "reliability",
+      "applies_when": "detail 模式(恒适用);brief 模式按 DFX 条目适用",
+      "check": "DFX 是否落到具体组件/机制/参数;detail 的 FMEA 是否覆盖全部核心组件;失效模式是否含依赖丢失/消息重复/并发冲突等真实失效",
+      "pass_criterion": "DFX 条条是设计点;FMEA 覆盖核心组件且失效模式真实;brief 的关键 DFX 点非口号",
+      "fail_example": "FMEA 失效模式一栏全是\"人为操作失误\";DFX 写\"加强日志\"无任何具体设计"
+    }
+  ]
+}
