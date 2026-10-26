@@ -99,6 +99,20 @@ class LifecycleBase(unittest.TestCase):
             "transition.py", "--pm-root", p["pm_root"], "verdict"))
         return p
 
+    def forge_status(self, p, status):
+        """直接改写 state 的 status 字段(夹具捷径;supersede 等无前置依赖的
+        转移测试用它构造源状态)。"""
+        pm = Path(p["pm_root"])
+        state = json.loads((pm / "state.json").read_text(encoding="utf-8"))
+        state["status"] = status
+        if status == "WAITING_FOR_INPUT":
+            state["resume_to"] = "PLANNING"
+        else:
+            state.pop("resume_to", None)
+        (pm / "state.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return p
+
 
 class TestInitAndLocate(LifecycleBase):
     def test_init_creates_round_and_state(self):
@@ -652,18 +666,6 @@ class TestSupersede(LifecycleBase):
 
     NOTE = "用户改为京东+淘宝且淘宝优先"
 
-    def forge_status(self, p, status):
-        pm = Path(p["pm_root"])
-        state = json.loads((pm / "state.json").read_text(encoding="utf-8"))
-        state["status"] = status
-        if status == "WAITING_FOR_INPUT":
-            state["resume_to"] = "PLANNING"
-        else:
-            state.pop("resume_to", None)
-        (pm / "state.json").write_text(
-            json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return p
-
     def supersede(self, pm_root, note=None):
         args = ["transition.py", "--pm-root", str(pm_root), "supersede"]
         if note is not None:
@@ -748,6 +750,121 @@ class TestSupersede(LifecycleBase):
         self.assertTrue(second["pm_root"].rstrip("/").endswith("-2/pm"),
                         second["pm_root"])
         self.assertEqual(self.read_state(second)["status"], "INIT")
+
+
+class TestCarryFromAndLocate(LifecycleBase):
+    """任务 2.5:carry-from 携账本与 locate 全轮汇报(design §4.1/§5.2)。
+
+    Why:换轮后账本被人为分割到多轮(重放轮 2 弃轮重建的痛点);继任轮经
+    --carry-from 携八字段语义投影,审计连续。locate 此前只报最新轮,悬挂轮
+    与改名轮永不入汇报(改名轮 round_sort_key 返回 ("",-1) 恒不入选)——
+    全轮清单+警告让存量现场可见、可点名。
+    """
+
+    def build_round_with_content(self, goal="旧目标"):
+        p = self.init(goal=goal)
+        p = h.out_json(self.run_next(p))  # PLANNING iter1
+        patch = self.draft("patch-old.json", {
+            "known": ["旧轮事实"],
+            "evidence": [h.min_evidence(1), h.min_evidence(2)],
+        })
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                 "state-update", str(patch)))
+        return p
+
+    def carry_init(self, goal, old_name):
+        draft = self.draft("objective-carry.json",
+                           {"goal": goal, "target_metric": "次周留存率",
+                            "baseline": 0.20})
+        proc = self.call("init.py", "--objective", str(draft),
+                         "--workspace", str(self.ws), "--carry-from", old_name)
+        return proc
+
+    def write_round(self, name, status, iteration):
+        pm = self.ws / ".pev" / name / "pm"
+        pm.mkdir(parents=True)
+        st = h.min_state(status=status, iteration=iteration)
+        (pm / "state.json").write_text(
+            json.dumps(st, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def test_carry_from_terminal_source_carries_projection(self):
+        # R17:三种终态源(SUPERSEDED 经真实事件,COMPLETE/STOPPED 直造)携账本
+        for status, via in (("COMPLETE", "forge"), ("STOPPED", "forge"),
+                            ("SUPERSEDED", "supersede")):
+            with self.subTest(status=status):
+                p = self.build_round_with_content()
+                if via == "supersede":
+                    p = h.out_json(self.call(
+                        "transition.py", "--pm-root", p["pm_root"],
+                        "supersede", "--note", "目标变更"))
+                else:
+                    self.forge_status(p, status)
+                old_name = Path(p["pm_root"]).parent.name
+                proc = self.carry_init(f"新目标甲-{status}", old_name)
+                self.assertEqual(proc.returncode, 0, proc.stdout)
+                payload = h.out_json(proc)
+                state = self.read_state(payload)
+                self.assertEqual(state["carried_from"], old_name)
+                self.assertEqual(state["objective"]["goal"], f"新目标甲-{status}")
+                self.assertEqual([e["id"] for e in state["evidence"]],
+                                 ["E1", "E2"], "evidence id 保留")
+                self.assertIn("旧轮事实", state["known"])
+                self.assertNotIn("transitions", state, "登记册/日志不携入")
+                self.assertEqual(state["iteration"], 0)
+
+    def test_carry_from_active_source_rejected(self):
+        # 活轮源不给携账本:活轮该 resume/reopen,不是换轮
+        p = self.build_round_with_content()  # PLANNING,活跃
+        old_name = Path(p["pm_root"]).parent.name
+        proc = self.carry_init("新目标乙", old_name)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any(e.get("code") == "E_CARRY_SOURCE_ACTIVE"
+                            for e in payload["errors"]), payload["errors"])
+        rounds = list((self.ws / ".pev").glob("prd-*/pm/state.json"))
+        self.assertEqual(len(rounds), 1, "拒绝时不得创建新轮")
+
+    def test_locate_full_inventory_and_hanging_warning(self):
+        # R18:全轮清单 + 悬挂警告(非终态且非被选中的最新轮)
+        self.write_round("prd-2026-01-01", "EXECUTING", 4)
+        self.write_round("prd-2026-01-02", "COMPLETE", 3)
+        latest = self.init(goal="今日目标")
+        today = Path(latest["pm_root"]).parent.name
+        proc = self.call("init.py", "--locate", "--workspace", str(self.ws))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertEqual(payload["pm_root"], latest["pm_root"])
+        joined = "\n".join(payload["warnings"])
+        for name in ("prd-2026-01-01", "prd-2026-01-02", today):
+            self.assertIn(name, joined, "全轮清单必须含每个轮次")
+        self.assertTrue(any("悬挂" in w and "prd-2026-01-01" in w
+                            for w in payload["warnings"]), payload["warnings"])
+        self.assertFalse(any("悬挂" in w and today in w
+                             for w in payload["warnings"]),
+                         "被选中的最新轮不是悬挂轮")
+
+    def test_locate_renamed_round_reported_not_selected(self):
+        # R19:改名轮不参与自动选择,但必须出现在汇报清单
+        self.write_round("prd-2026-01-01", "EXECUTING", 2)
+        self.write_round("prd-2026-01-05-test", "COMPLETE", 1)
+        proc = self.call("init.py", "--locate", "--workspace", str(self.ws))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(payload["pm_root"].endswith("prd-2026-01-01/pm"),
+                        payload["pm_root"])
+        self.assertTrue(any("prd-2026-01-05-test" in w and "命名不匹配" in w
+                            for w in payload["warnings"]), payload["warnings"])
+
+    def test_locate_all_unmatched_reports_none_locatable(self):
+        # R19:仅存改名轮时明确报"无可自动定位轮次",由用户点名
+        self.write_round("prd-2026-01-05-test", "COMPLETE", 1)
+        proc = self.call("init.py", "--locate", "--workspace", str(self.ws))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertIsNone(payload["pm_root"])
+        joined = "\n".join(payload["warnings"])
+        self.assertIn("无可自动定位", joined)
+        self.assertIn("prd-2026-01-05-test", joined)
 
 
 if __name__ == "__main__":
