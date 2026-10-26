@@ -181,6 +181,8 @@ verdict 分支（全部由 `commit verification` 内部执行，判定值读自�
 
 PASS 后的渲染规则：交付物数据只取自 PASS 轮的 `artifact.artifact` 和 `state`（如证据表）。渲染经 `render.py`：缺必填数据时脚本拒绝发布，退回 REVISE 先补产物，不得编造内容；已发布的 `output/` 文件禁止手工编辑，修正一律经重新渲染，与当前交付物无关的残留文件用 `render.py --prune` 清理。Verifier 的 Completeness 检查（第 8 维）应在 PASS 前拦住这种缺失（见 agents/verifier.md）。
 
+**轮外文件与权威让渡**：交付物不得声明轮外可变文件为权威（轮外指 pm/ 与 output/ 之外的文件，如项目根的 open-decisions.md——它们不受本状态机验证约束，交付后仍可被编辑）。用户裁定若影响交付内容，一律写入已验证的源数据（artifact 正文或 state 语义字段）后随交付物渲染；确需保留独立的裁定过程记录时，在交付物中标注为非权威的过程参考。Verifier 的轮外权威检查（D 类）在验证期即拦住让渡声明（见 agents/verifier.md）。
+
 交付后，`status="COMPLETE"`。此后工程侧的需求澄清由 `requirement-clarify` skill 接手；其打回 `prd_gaps`（每条包含问题本身和它锚定的 PRD 章节）按判据 2 reopen 同轮重规划，已交付的历史轮只读不改写，Evidence Ledger 和迭代记录沿用同一份。用户提出新目标按判据 3 换轮。交付后迟到或重复的通知若没有新问题，不重新开始工作、不重复收口。
 
 ### 6. WAITING_FOR_INPUT 恢复协议

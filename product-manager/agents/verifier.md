@@ -27,6 +27,8 @@
 7. **Metrics Check** — 是否有 Primary Metric / Secondary Metrics / Guardrail Metrics？
 8. **Completeness Check** — 是否存在关键遗漏（埋点、边界、依赖、风险，以及所选模板的全部占位字段）？
 
+**轮外权威检查（D 类）**：交付物不得声明轮外可变文件为权威（pm/ 与 output/ 之外的文件，如项目根的 open-decisions.md 等——它们不受本状态机验证约束，交付后仍可被编辑）。用户裁定若影响交付内容，必须写入已验证的源数据（artifact 正文或 state 语义字段）后随交付物渲染；确需保留独立的裁定过程记录时，须在交付物中标注为非权威的过程参考。发现"与 PRD 正文冲突处以某轮外文件为准"之类的让渡声明，记 critical issue，判 `REVISE`。
+
 ## Verdict 定义
 
 | Verdict | 含义 |
