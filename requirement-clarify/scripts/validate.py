@@ -1,43 +1,58 @@
 #!/usr/bin/env python3
-"""requirement-clarify PEV 产物校验器(双端通用,仅依赖 Python 标准库)。
+"""requirement-clarify PEV 产物校验器(只读;双端通用,仅依赖 Python 标准库)。
 
 用法:
-    python3 validate.py <PEV_DIR>      # PEV_DIR 为本 skill 工作目录,如 .pev/prd-2026-09-20/rc/
+    python3 validate.py --rc-root <rc 目录绝对路径>
 
-按文件名后缀路由到 schemas/ 下对应 schema:
-    state.json                    -> state.schema.json
-    iterations/*-plan.json        -> plan.schema.json
-    iterations/*-artifact.json    -> artifact.schema.json
-    iterations/*-verification.json-> verification.schema.json
+stdout 永远是单行紧凑 JSON(协议见 _common.py):ok/errors/warnings + 定位字段
+rc_root/status/iteration。退出码 0 = 无交付错误;1 = 存在错误。
+本脚本是唯一只读审计入口:恢复时由它定位续跑点;也是其他脚本的写后守卫。
+
+按文件名后缀路由到 schemas/ 下对应 schema(iterations/<N>-verification-input.json
+是脚本生成的快照,跳过;*.tmp 是中断残留,警告):
+    state.json                     -> state.schema.json
+    iterations/*-plan.json         -> plan.schema.json
+    iterations/*-artifact.json     -> artifact.schema.json
+    iterations/*-verification.json -> verification.schema.json
 
 除 JSON Schema 子集(type/enum/required/properties/items/minItems/
 minimum/maximum)外,强制以下语义规则——这些是状态机的硬约束,靠肉眼最容易漏:
     R1  Evidence 条目 type=FACT 或 DECISION 时,evidence 必须是非空字符串
         (FACT 证据=PRD §x / .pev/<轮次>/pm/ 产物 / 代码文件;DECISION 证据=澄清记录锚点)
-    R2  artifact.status ∈ {replan_required, blocked} 时,replan_reason 必须至少有一个
-        非空字符串字段(空对象或全 null 不算填了理由)
-    R3  state.status=WAITING_FOR_INPUT 时,resume_to 必填;
-        其他 status 下 resume_to 必须不存在
-    R4  state.status=WAITING_FOR_PRD 时,prd_gaps 必须非空;
-        其他 status 下 prd_gaps 必须为空
-    R5  价值先行(核心不变量 #1):(a) 任一 Plan 的 action 顺序必须非递减
-        (interrogate_value → interrogate_ambiguity → draft);(b) 首个 Plan
-        若含 interrogate_ambiguity,其前必须有 interrogate_value
-    R6  artifact.status=completed 时,artifact 正文必须是非空对象(空壳不算完成)
-    R7  verdict 必须与内容一致:REVISE → required_changes 非空(Executor 按它修订);
-        REPLAN → critical_issues 或 evidence_gaps 非空(Planner 按它重规划)
-    R8  state.status=COMPLETE 的前提:output/spec.md 存在且非空(真交付了),
-        且 iteration ≤ max_iterations(SKILL.md §8:超限不得宣称完成)
-    R9  artifact.status=completed 时 unresolved 必须为空(还有未决问题就该 blocked)
-    R10 state.plans / state.artifacts 登记册(文件名,不存内容副本)与
-        iterations/ 目录双向一致
+    R2  artifact.status ∈ {replan_required, blocked} 时,replan_reason 必须至少有
+        一个非空字符串字段(空对象或全 null 不算填了理由)
+    R3  state.status=WAITING_FOR_INPUT 时,resume_to 必填;其他 status 下必须不存在
+    R4  state.status=WAITING_FOR_PRD 时,prd_gaps 必须非空;其他 status 下必须为空
+    R5  价值先行(核心不变量 #1):(a) 任一 Plan 的 action 顺序必须非递减;
+        (b) 首个 Plan 若含 interrogate_ambiguity,其前必须有 interrogate_value
+    R6  artifact.status=completed 时,artifact 正文必须是非空对象
+    R7  verdict 必须与内容一致:REVISE → required_changes 非空;
+        REPLAN → critical_issues 或 evidence_gaps 非空;PASS → required_changes 空
+    R8  state.status=COMPLETE 的前提:output/spec.md 存在且非空,
+        且 iteration ≤ max_iterations(超限不得宣称完成)
+    R9  artifact.status=completed 时 unresolved 必须为空
+    R10 state.plans / state.artifacts 登记册与 iterations/ 目录双向一致
 
-退出码:0 = 全部通过;1 = 存在错误(错误明细逐条打印到 stdout)。
+交付资格门(design.md"来源绑定"/"兼容性与失败语义";错误=不可交付,与普通
+提示严格区分):
+    P1  status=COMPLETE:当前轮须存在 verdict=PASS 且带 provenance 的验证报告;
+        按盘上文件复算 Artifact/有效 Plan/语义输入三摘要须与快照一致;
+        output/spec.md 须与来源确定性渲染逐字节一致。缺报告、错轮 PASS、
+        摘要失配、字节失配、缺有效绑定均为交付错误(旧数据可读,不补造绑定)。
+    P2  status=VERIFYING 且当前报告已绑定 provenance:复算不一致即当前 PASS
+        作废(交付错误)。
 """
 
 import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import (  # noqa: E402
+    Reporter, canonical_sha256, file_no, parse_rc_root, read_json, run,
+)
+from provenance import ProvenanceError, load_inputs, snapshot_for  # noqa: E402
+from render_lib import RenderError, render_spec  # noqa: E402
 
 SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
@@ -46,6 +61,7 @@ FILE_SCHEMAS = [
     ("-artifact.json", "artifact.schema.json"),
     ("-verification.json", "verification.schema.json"),
 ]
+SNAPSHOT_SUFFIX = "-verification-input.json"
 
 RESUME_STAGES = {"PLANNING", "EXECUTING", "VERIFYING"}
 
@@ -63,6 +79,7 @@ def plan_ordinal(name):
     """iterations/<N>-plan.json -> N;取不到排到最后。"""
     head = Path(name).name.split("-", 1)[0]
     return int(head) if head.isdigit() else 1 << 30
+
 
 TYPE_MAP = {
     "object": dict,
@@ -242,13 +259,16 @@ def semantic_rules(state, plans, artifacts, verifications, pev_dir, errs):
     # R7 — verdict 必须与内容一致,否则下游拿到的是空指令(REVISE 空转直到耗尽迭代)
     for name, ver in verifications:
         verdict = ver.get("verdict")
+        if verdict == "PASS" and ver.get("required_changes"):
+            errs.add(name, "$.required_changes",
+                     "R7: verdict=PASS 时 required_changes 必须为空")
         if verdict == "REVISE" and not ver.get("required_changes"):
             errs.add(name, "$.required_changes",
                      "R7: verdict=REVISE 时 required_changes 必须非空——Executor 按它修订,空则无从下手")
         if verdict == "REPLAN" and not (ver.get("critical_issues") or ver.get("evidence_gaps")):
             errs.add(name, "$.critical_issues",
                      "R7: verdict=REPLAN 时 critical_issues 或 evidence_gaps 必须非空——Planner 按它重规划")
-        # BLOCKED 不强制:其问题清单在 artifact.unresolved,由 SKILL.md §5 呈给用户
+        # BLOCKED 不强制:其问题清单在 artifact.unresolved,由呈现协议呈给用户
 
     # R8 — COMPLETE 的前提:真交付了,且没超迭代上限
     if state and state.get("status") == "COMPLETE":
@@ -263,9 +283,9 @@ def semantic_rules(state, plans, artifacts, verifications, pev_dir, errs):
         it, mx = state.get("iteration"), state.get("max_iterations")
         if isinstance(it, int) and isinstance(mx, int) and it > mx:
             errs.add("state.json", "$.iteration",
-                     f"R8: iteration={it} 已超过 max_iterations={mx},按 SKILL.md §8 不得宣称完成")
+                     f"R8: iteration={it} 已超过 max_iterations={mx},不得宣称完成")
 
-    # R9 — completed 不得携带未决问题(agents/executor.md Rule 4:有未决就应 blocked)
+    # R9 — completed 不得携带未决问题(有未决就应 blocked)
     for name, art in artifacts:
         if art.get("status") == "completed" and art.get("unresolved"):
             errs.add(name, "$.unresolved",
@@ -294,20 +314,107 @@ def semantic_rules(state, plans, artifacts, verifications, pev_dir, errs):
                          f"R10: 登记的 {name} 在 iterations/ 中不存在")
 
 
+def recompute_snapshot(rc_root, state, iteration, errs):
+    """按盘上文件复算三摘要;返回 (快照, artifact 登记名);失败记入 errs 并返回 None。"""
+    try:
+        plan_name, plan_doc, art_name, artifact_doc = load_inputs(
+            rc_root, state, iteration)
+    except ProvenanceError as e:
+        errs.add(e.file, e.json_path or "$", f"P 门: {e}")
+        return None
+    return snapshot_for(state, plan_doc, plan_name, artifact_doc, iteration), art_name
+
+
+def deliverability_gates(state, verifications, rc_root, errs):
+    """P1/P2:当前 PASS 绑定 + 来源复算 + 确定性渲染;错误即不可交付。"""
+    if not state:
+        return
+    status = state.get("status")
+    if status not in ("COMPLETE", "VERIFYING"):
+        return
+    iteration = state.get("iteration")
+    if not isinstance(iteration, int):
+        return
+    n = file_no(iteration)
+    ver_name = f"iterations/{n:02d}-verification.json"
+    ver = read_json(rc_root / "iterations" / f"{n:02d}-verification.json")
+    if status == "COMPLETE":
+        if ver is None:
+            errs.add("state.json", "$.status",
+                     f"P1: status=COMPLETE 但当前轮缺验证报告({ver_name});"
+                     "缺当前 PASS 不可交付")
+            return
+        if ver.get("verdict") != "PASS":
+            errs.add(ver_name, "$.verdict",
+                     f"P1: 当前轮报告 verdict={ver.get('verdict')!r},"
+                     "非 PASS 不可交付")
+        if "provenance" not in ver:
+            errs.add(ver_name, "$.provenance",
+                     "P1: 当前 PASS 缺有效绑定(provenance),不可交付;"
+                     "旧数据可读,不补造绑定")
+            return
+    elif not (isinstance(ver, dict) and "provenance" in ver):
+        return  # VERIFYING 未绑定:尚在验证中,不构成交付资格问题
+
+    rec = recompute_snapshot(rc_root, state, iteration, errs)
+    if rec is None:
+        return
+    snap_name = f"iterations/{n:02d}-verification-input.json"
+    snap = read_json(rc_root / "iterations"
+                     / f"{n:02d}-verification-input.json")
+    if snap is None:
+        errs.add(snap_name, "$", "P 门: 快照不存在,绑定无从复算")
+        return
+    current, art_name = rec
+    for key in ("artifact_sha256", "plan_sha256", "state_projection_sha256"):
+        if current.get(key) != snap.get(key):
+            errs.add(art_name if key == "artifact_sha256"
+                     else (snap_name if key == "plan_sha256" else "state.json"),
+                     "$",
+                     "P 门: 绑定复算不一致——绑定后输入被修改,当前 PASS 已失效,"
+                     "不可交付")
+            return
+    # 确定性渲染逐字节比对(PASS 已绑定,发布物必须等于来源渲染)
+    art = read_json(rc_root / "iterations" / art_name)
+    try:
+        text = render_spec((art or {}).get("artifact"), state, art_name)
+    except RenderError as e:
+        errs.add(f"iterations/{art_name}", getattr(e, "json_path", None),
+                 f"P 门: 来源无法重渲染: {e}")
+        return
+    spec = rc_root / "output" / "spec.md"
+    try:
+        published = spec.read_bytes()
+    except OSError:
+        published = None
+    if published != text.encode("utf-8"):
+        errs.add("output/spec.md", None,
+                 "P 门: 发布物与来源确定性渲染不一致(缺失或手工修改),不可交付")
+
+
 def main(argv):
-    if len(argv) < 2:
-        print("用法: python3 validate.py <PEV_DIR>   # 如 .pev/prd-2026-09-20/rc/")
-        return 1
-    pev_dir = Path(argv[1])
-    if not pev_dir.is_dir():
-        print(f"错误: 目录 {pev_dir} 不存在")
-        return 1
+    rep = Reporter("validate")
+    rest = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--rc-root" and i + 1 < len(argv):
+            rest += argv[i:i + 2]
+            i += 2
+        else:
+            rep.command_error("validate", f"无法识别的参数: {argv[i]}")
+            return rep.emit()
+    rc_root = parse_rc_root(rest, "validate", rep)
+    if rc_root is None or rep.errors:
+        return rep.emit()
+    if not rc_root.is_dir():
+        rep.command_error("validate", f"目录不存在: {rc_root}")
+        return rep.emit()
 
     errs = Errors()
     check_rule_tables(errs)
 
     state = None
-    state_path = pev_dir / "state.json"
+    state_path = rc_root / "state.json"
     if not state_path.is_file():
         errs.add("state.json", "$", "缺失(state.json 必须存在)")
     else:
@@ -319,10 +426,16 @@ def main(argv):
     plans = []
     artifacts = []
     verifications = []
-    iter_dir = pev_dir / "iterations"
+    iter_dir = rc_root / "iterations"
     if iter_dir.is_dir():
         for f in sorted(iter_dir.glob("*.json")):
-            schema_name = next((s for suffix, s in FILE_SCHEMAS if f.name.endswith(suffix)), None)
+            if f.name.endswith(SNAPSHOT_SUFFIX):
+                continue  # 脚本生成的验证输入快照,单独由 P 门复算
+            if f.name.endswith(".tmp"):
+                rep.warn(f"{f.name}: 中断残留的临时文件,确认后可删除")
+                continue
+            schema_name = next((s for suffix, s in FILE_SCHEMAS
+                                if f.name.endswith(suffix)), None)
             if schema_name is None:
                 errs.add(f.name, "$", "文件名不匹配任何产物类型(*-plan/*-artifact/*-verification)")
                 continue
@@ -338,16 +451,25 @@ def main(argv):
             elif schema_name == "verification.schema.json":
                 verifications.append((f"iterations/{f.name}", doc))
 
-    semantic_rules(state, plans, artifacts, verifications, pev_dir, errs)
+    semantic_rules(state, plans, artifacts, verifications, rc_root, errs)
+    deliverability_gates(state, verifications, rc_root, errs)
 
-    if errs:
-        print(f"校验失败,{len(errs)} 个问题:")
-        for e in errs.items:
-            print(f"  - {e}")
-        return 1
-    print(f"OK: {pev_dir} 全部产物通过 schema 与语义规则校验")
-    return 0
+    for item in errs.items:
+        file_part, _, rest_msg = item.partition(" ")
+        json_part, _, reason = rest_msg.partition(": ")
+        rep.error(file_part, json_part or None, reason or rest_msg)
+
+    # 仅填充 status/iteration 定位字段(错误已另行报告,不重复记)
+    st = read_json(state_path) if state_path.is_file() else None
+    if isinstance(st, dict):
+        rep.status = st.get("status")
+        rep.iteration = st.get("iteration")
+    if rep.errors:
+        rep.warnings.append("校验失败;错误=不可交付或需修复,恢复动作见各条 reason")
+    else:
+        rep.warnings.append("OK: 全部产物通过 schema、语义规则与交付资格校验")
+    return rep.emit()
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    sys.exit(run("validate", lambda: main(sys.argv[1:])))

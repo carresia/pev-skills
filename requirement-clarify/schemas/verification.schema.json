@@ -2,9 +2,17 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PEV Verification",
   "type": "object",
-  "required": ["verdict", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence"],
+  "required": ["verdict", "strengths", "critical_issues", "warnings", "required_changes", "evidence_gaps", "confidence", "verification_input"],
   "properties": {
     "verdict": {"type": "string", "enum": ["PASS", "REVISE", "REPLAN", "BLOCKED"]},
+    "verification_input": {
+      "type": "object",
+      "description": "复述验证输入快照(iterations/<N>-verification-input.json)的逐字段拷贝;与盘上快照不一致的报告不可提交(commit.py 强制)"
+    },
+    "provenance": {
+      "type": "object",
+      "description": "来源绑定,由 commit.py PASS 收口链复算一致后写入(模型不手写);字段 algorithm/plan_path/artifact_sha256/plan_sha256/state_projection_sha256"
+    },
     "strengths": {"type": "array", "items": {"type": "string"}},
     "critical_issues": {
       "type": "array",

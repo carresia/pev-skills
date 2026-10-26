@@ -54,6 +54,24 @@
     },
     "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R10 对账)"},
     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R10 对账)"},
+    "transitions": {
+      "type": "array",
+      "description": "事件账本(审计记录,仅由流程脚本在同一次状态原子写中追加;不单独证明交付正确,交付资格由 validate.py P 门复算)",
+      "items": {
+        "type": "object",
+        "required": ["event", "from", "to", "from_iteration", "to_iteration", "at"],
+        "properties": {
+          "event": {"type": "string", "description": "plan|artifact|verification|state-update|reopen|complete"},
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "from_iteration": {"type": "integer"},
+          "to_iteration": {"type": "integer"},
+          "at": {"type": "string"},
+          "ref_sha256": {"type": ["string", "null"], "description": "关联产物的规范化 SHA-256(重跑幂等判定)"},
+          "param": {"type": ["object", "string", "null"], "description": "事件参数(如 verdict、分叉 branch、reopen note)"}
+        }
+      }
+    },
     "iteration": {"type": "integer", "minimum": 0},
     "max_iterations": {"type": "integer", "minimum": 1, "default": 5}
   }
