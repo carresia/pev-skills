@@ -445,11 +445,8 @@ def main():
         return rep.emit()
 
     rep.written.append(f"output/{out_name}")
-    rep.next.append({
-        "kind": "command",
-        "cwd": str(SKILL_ROOT),
-        "argv": ["scripts/transition.py", "--pm-root", str(pm), "complete"],
-    })
+    # 发布形态主要经 commit verification 的 PASS 收口内部调用(任务 2.10
+    # 收口折叠);CLI 保留作手工修复入口,收口转移由 commit verification 完成
     return rep.emit()
 
 

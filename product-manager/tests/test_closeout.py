@@ -377,10 +377,6 @@ class TestProjectionExclusion(CloseoutTestCase):
         self.assertNotEqual(d0, d2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SnapshotTestCase(CloseoutTestCase):
     """快照与绑定公共夹具:一条已登记 plan+artifact、尚无 verification 的当轮。"""
 
@@ -461,10 +457,13 @@ class TestSnapshotContract(SnapshotTestCase):
         # 绑定 PASS 后快照与同编号产物一律只读,修订须新建轮次
         state, plan, artifact = self.build_round()
         self.assertEqual(self.run_rp().returncode, 0)
+        snap = self.expected_snapshot(state, plan, artifact)
         ver = h.min_verification()
-        ver["verification_input"] = self.expected_snapshot(state, plan, artifact)
+        ver["verification_input"] = snap
+        ver["provenance"] = {k: snap[k] for k in
+                             ("algorithm", "plan_path", "artifact_sha256",
+                              "plan_sha256", "state_projection_sha256")}
         self.pm.write_doc(1, "verification", ver)
-        self.assertEqual(self.run_rp("--bind").returncode, 0)
         before = self.snap_path().read_bytes()
         artifact["artifact"]["title"] = "绑定之后再改"
         self.pm.write_doc(1, "artifact", artifact)
@@ -481,79 +480,68 @@ class TestSnapshotContract(SnapshotTestCase):
 
 
 class TestProvenanceBinding(SnapshotTestCase):
-    """--bind:报告复述一致 + 复算一致才写 provenance(design:23/25)。"""
+    """收口折叠后的绑定契约(design §2.3,任务 2.10):commit verification
+    提交报告即复算三摘要并写 provenance——复述一致 + 复算一致,任一不符
+    该 verdict 不可用于交付。"""
 
-    def bind_ready(self):
+    PROV_KEYS = ("algorithm", "plan_path", "artifact_sha256",
+                 "plan_sha256", "state_projection_sha256")
+
+    def commit_ver(self, ver_doc, name="ver-draft.json"):
+        draft = self.pm.root.parent / name
+        draft.write_text(json.dumps(ver_doc, ensure_ascii=False, indent=2)
+                         + "\n", encoding="utf-8")
+        return h.run_script("commit.py", "--pm-root", str(self.pm.root),
+                            "verification", str(draft))
+
+    def bound_ready(self):
+        """快照已生成、报告草稿复述一致的现场(尚未提交)。"""
         state, plan, artifact = self.build_round()
         self.assertEqual(self.run_rp().returncode, 0)
         snap = self.expected_snapshot(state, plan, artifact)
         ver = h.min_verification()
         ver["verification_input"] = dict(snap)
-        self.pm.write_doc(1, "verification", ver)
         return state, plan, artifact, snap, ver
 
-    def test_bind_writes_provenance_and_returns_verdict_step(self):
-        state, plan, artifact, snap, ver = self.bind_ready()
-        proc = self.run_rp("--bind")
+    def test_verification_binds_and_completes(self):
+        state, plan, artifact, snap, ver = self.bound_ready()
+        proc = self.commit_ver(ver)
         self.assertEqual(proc.returncode, 0, proc.stdout)
         payload = h.out_json(proc)
         self.assertTrue(payload["ok"])
-        saved = __import__("json").loads(self.ver_path().read_text(encoding="utf-8"))
-        self.assertEqual(saved["provenance"], {
-            "algorithm": "sha256-v1",
-            "plan_path": snap["plan_path"],
-            "artifact_sha256": snap["artifact_sha256"],
-            "plan_sha256": snap["plan_sha256"],
-            "state_projection_sha256": snap["state_projection_sha256"],
-        })
-        self.assertEqual(payload["written"], ["iterations/01-verification.json"])
-        self.assertEqual(payload["next"][0]["kind"], "command")
-        self.assertIn("verdict", payload["next"][0]["argv"])
+        self.assertEqual(payload["status"], "COMPLETE")
+        saved = json.loads(self.ver_path().read_text(encoding="utf-8"))
+        self.assertEqual(saved["provenance"],
+                         {k: snap[k] for k in self.PROV_KEYS})
+        self.assertIn("iterations/01-verification.json", payload["written"])
 
-    def test_bind_idempotent_when_already_bound_consistent(self):
-        self.bind_ready()
-        self.assertEqual(self.run_rp("--bind").returncode, 0)
-        before = self.ver_path().read_bytes()
-        proc = self.run_rp("--bind")
-        self.assertEqual(proc.returncode, 0, proc.stdout)
-        self.assertEqual(self.ver_path().read_bytes(), before)
-
-    def test_bind_rejects_missing_restatement(self):
+    def test_verification_rejects_missing_restatement(self):
         state, plan, artifact = self.build_round()
         self.assertEqual(self.run_rp().returncode, 0)
-        self.pm.write_doc(1, "verification", h.min_verification())
-        proc = self.run_rp("--bind")
+        proc = self.commit_ver(h.min_verification())
         self.assertEqual(proc.returncode, 1)
         self.assertFalse(h.out_json(proc)["ok"])
-        saved = __import__("json").loads(self.ver_path().read_text(encoding="utf-8"))
-        self.assertNotIn("provenance", saved)
+        self.assertFalse(self.ver_path().exists(), "校验失败不得落盘报告")
 
-    def test_bind_rejects_wrong_restatement(self):
-        state, plan, artifact, snap, ver = self.bind_ready()
+    def test_verification_rejects_wrong_restatement(self):
+        state, plan, artifact, snap, ver = self.bound_ready()
         ver["verification_input"]["artifact_sha256"] = "0" * 64
-        self.pm.write_doc(1, "verification", ver)
-        proc = self.run_rp("--bind")
+        proc = self.commit_ver(ver)
         self.assertEqual(proc.returncode, 1)
+        self.assertFalse(self.ver_path().exists())
 
-    def test_bind_rejects_source_changed_after_dispatch(self):
+    def test_verification_rejects_source_changed_after_dispatch(self):
         # 复算不一致:报冲突路径,不作废快照;恢复是重写快照重新派发,不手改报告
-        state, plan, artifact, snap, ver = self.bind_ready()
+        state, plan, artifact, snap, ver = self.bound_ready()
         artifact["artifact"]["title"] = "派发之后被改写"
         self.pm.write_doc(1, "artifact", artifact)
-        proc = self.run_rp("--bind")
+        proc = self.commit_ver(ver)
         self.assertEqual(proc.returncode, 1)
         payload = h.out_json(proc)
         self.assertFalse(payload["ok"])
         self.assertTrue(any("01-artifact" in str(e.get("file", ""))
                             for e in payload["errors"]), payload["errors"])
-        saved = __import__("json").loads(self.ver_path().read_text(encoding="utf-8"))
-        self.assertNotIn("provenance", saved)
-
-    def test_bind_requires_submitted_report(self):
-        self.build_round()
-        self.assertEqual(self.run_rp().returncode, 0)
-        proc = self.run_rp("--bind")
-        self.assertEqual(proc.returncode, 1)
+        self.assertFalse(self.ver_path().exists())
 
 
 class TestValidateProtocol(CloseoutTestCase):
@@ -591,3 +579,7 @@ class TestValidateProtocol(CloseoutTestCase):
         self.build_chain(status="VERIFYING", bind=True)
         proc = h.run_validate(self.pm.root)
         self.assertEqual(proc.returncode, 0, proc.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

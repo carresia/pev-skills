@@ -4,13 +4,14 @@
 用法:
     python3 transition.py --pm-root <pm 目录绝对路径> <事件> [旗标]
 
-事件:need-input | resume | reopen | supersede | verdict | complete。
+事件:need-input | resume | reopen | supersede。
 旗标:resume 的 --invalidate-plan 变体与 --raise-limit <新上限> 变体;
 reopen 的 --note <prd_gaps 要点>(必填);supersede 的 --note <废弃原因>
 (必填)。阶段推进事件(start-planning/plan-validated/artifact-validated/
 executor-replan/executor-blocked)已并入 init/commit,authorized-resume 已
-并入 resume --raise-limit——本命令面不再接受它们(任务 2.9 事件面合并);
-transitions 日志仍按 v1 事件名记录,存量日志可读。
+并入 resume --raise-limit,verdict/complete 已折叠进 commit verification
+(任务 2.9/2.10)——本命令面不再接受它们;transitions 日志仍按 v1 事件名
+记录,存量日志可读。
 
 再进入类事件的触发场景(区别在于轮次当前处于什么状态):
   resume            轮次未结束,停在 WAITING_FOR_INPUT 等用户拍板(开放问题/
@@ -45,13 +46,12 @@ from _common import (  # noqa: E402
 
 EVENT_SOURCE = {
     "need-input": "PLANNING",
-    "verdict": "VERIFYING",
-    "complete": "VERIFYING",
     "resume": "WAITING_FOR_INPUT",
     "reopen": "COMPLETE",
     "supersede": None,  # 任何状态可触发,见 ANY_SOURCE_EVENTS
 }
 # 内部事件:命令面已并入他处,仅用于转移日志与重跑判定,不接受 CLI 直调
+# (verdict/complete 的转移条目由 commit.py verification 子命令写入)
 INTERNAL_SOURCE = {"authorized-resume": "STOPPED"}
 RESUME_STAGES = ("PLANNING", "EXECUTING", "VERIFYING")
 # 无单一源状态的事件:supersede 从任何状态(含终态)触发;
@@ -103,10 +103,10 @@ def latest_doc(pm, iteration, kind):
     return read_json(path) if path.is_file() else None
 
 
-def derive_next(pm, state, event, branch=None):
+def derive_next(pm, state, event):
     """按事件表与当前状态推导下一步(结构化对象数组)。"""
     status = state.get("status")
-    if event == "reopen" or event == "authorized-resume" or branch == "REPLAN":
+    if event == "reopen" or event == "authorized-resume":
         return [{"kind": "draft", "target": "plan",
                  "notes": "以 agents/planner.md 起草 Plan,经 commit.py plan 提交"}]
     if event == "supersede":
@@ -114,15 +114,9 @@ def derive_next(pm, state, event, branch=None):
                  "notes": "换轮:起草新 objective 后以 init.py --objective <草稿> "
                           "--workspace <目录> --carry-from <旧轮目录名> 创建继任轮"
                           "(旧轮已冻结,证据保全)"}]
-    if branch == "REVISE":
-        return [{"kind": "draft", "target": "artifact",
-                 "notes": "按 required_changes 修订 Artifact 后重新提交"}]
-    if branch == "BLOCKED" or event == "need-input":
+    if event == "need-input":
         return [{"kind": "ask-user",
                  "items": ["缺什么 / 为什么重要 / 怎么获取"]}]
-    if branch == "PASS":
-        return [{"kind": "command", "cwd": str(SKILL_ROOT),
-                 "argv": ["scripts/render.py", "--pm-root", str(pm)]}]
     if event == "resume":
         target = state.get("status")
         if target == "PLANNING":
@@ -283,12 +277,6 @@ def main():
 
     # 事件身份的关联产物摘要(重跑判定用)
     ref = None
-    if event == "verdict":
-        ver = latest_doc(pm, it, "verification")
-        ref = canonical_sha256(ver) if ver is not None else None
-    elif event == "complete":
-        art = latest_doc(pm, it, "artifact")
-        ref = canonical_sha256(art) if art is not None else None
 
     verdict_branch = classify(state, log_event, param, ref)
     if verdict_branch == "done":
@@ -306,8 +294,6 @@ def main():
                   f"最近转移: {json.dumps(last, ensure_ascii=False) if last else '无'};"
                   f"全部合法事件: {sorted(EVENT_SOURCE)}")
         return rep.emit()
-
-    branch_out = None
 
     # —— execute 分支:先守卫,后转移 ——
     # reopen 与 authorized-resume(--raise-limit)是 +1;
@@ -328,47 +314,6 @@ def main():
                       "本轮已登记 Plan,不写占位 Plan;继续现有 Plan 或 REPLAN")
             return rep.emit()
         dest = "WAITING_FOR_INPUT"
-    elif event == "verdict":
-        ver = latest_doc(pm, it, "verification")
-        if ver is None:
-            rep.error("state.json", "$", "当前轮报告未提交")
-            return rep.emit()
-        if "provenance" not in ver:
-            rep.error("state.json", "$",
-                      "报告未绑定 provenance,verdict 不可用于转移;先 --bind")
-            return rep.emit()
-        if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
-            rep.error("state.json", "$", "校验未通过(P1 复算不一致等),verdict 作废")
-            return rep.emit()
-        branch = ver.get("verdict")
-        branch_out = branch
-        if branch == "PASS":
-            dest = "VERIFYING"  # 不转移,只解锁收口
-        elif branch == "REVISE":
-            dest = "EXECUTING"
-        elif branch == "REPLAN":
-            dest = "PLANNING"
-        else:
-            dest = "WAITING_FOR_INPUT"
-        plus_one = branch in ("REVISE", "REPLAN")
-        new_it = it + 1 if plus_one else it
-        if plus_one and new_it > max_it:
-            return stop_at_limit(pm, state, rep, "verdict", it, ref,
-                                 {"verdict": branch})
-    elif event == "complete":
-        ver = latest_doc(pm, it, "verification")
-        if ver is None or "provenance" not in ver or ver.get("verdict") != "PASS":
-            rep.error("state.json", "$",
-                      "complete 守卫:当前轮须存在已绑定的 PASS")
-            return rep.emit()
-        if run_gate(["render.py", "--pm-root", str(pm), "--check"]) != 0:
-            rep.error("state.json", "$",
-                      "complete 守卫:渲染字节比对未通过,先 render.py 发布")
-            return rep.emit()
-        if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
-            rep.error("state.json", "$", "complete 守卫:校验未通过")
-            return rep.emit()
-        dest = "COMPLETE"
     elif event == "resume":
         if log_event == "authorized-resume":
             # 提额恢复(原 authorized-resume):STOPPED→PLANNING,+1 按新上限
@@ -392,9 +337,7 @@ def main():
     if new_it != it:
         state["iteration"] = new_it
     if dest == "WAITING_FOR_INPUT":
-        if event == "verdict":
-            state["resume_to"] = "VERIFYING"
-        elif event == "need-input":
+        if event == "need-input":
             state["resume_to"] = "PLANNING"
     else:
         state.pop("resume_to", None)
@@ -406,7 +349,7 @@ def main():
 
     if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
         rep.warn("转移已落盘但写后校验未通过;按 errors 恢复,必要时重跑守卫命令")
-    rep.next.extend(derive_next(pm, state, log_event, branch_out))
+    rep.next.extend(derive_next(pm, state, log_event))
     return rep.emit()
 
 

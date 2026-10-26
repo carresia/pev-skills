@@ -90,15 +90,11 @@ class LifecycleBase(unittest.TestCase):
         return p
 
     def bind_pass(self, payload):
-        p = payload
-        p = h.out_json(self.call(
-            "commit.py", "--pm-root", p["pm_root"],
-            "verification", str(self.report_draft(p, "PASS"))))
-        p = h.out_json(self.call(
-            "record_provenance.py", "--pm-root", p["pm_root"], "--bind"))
-        p = h.out_json(self.call(
-            "transition.py", "--pm-root", p["pm_root"], "verdict"))
-        return p
+        """提交 PASS 报告——收口折叠(任务 2.10)后,commit verification
+        一步完成绑定/转移/PASS 收口(render+validate+COMPLETE)。"""
+        return h.out_json(self.call(
+            "commit.py", "--pm-root", payload["pm_root"],
+            "verification", str(self.report_draft(payload, "PASS"))))
 
     def forge_status(self, p, status):
         """直接改写 state 的 status 字段(夹具捷径;supersede 等无前置依赖的
@@ -171,13 +167,11 @@ class TestNormalChain(LifecycleBase):
         p = self.reach_verifying(p)
         self.assertEqual(p["status"], "VERIFYING")
         p = self.bind_pass(p)
-        self.assertEqual(p["status"], "VERIFYING", "PASS 不转移状态")
-        p = h.out_json(self.run_next(p))            # render
-        self.assertEqual(p["written"], ["output/prd.md"])
-        self.assertEqual(p["next"][0]["kind"], "command")
-        self.assertIn("complete", p["next"][0]["argv"])
-        p = h.out_json(self.run_next(p))            # complete
+        # 收口折叠(任务 2.10):commit verification 一步到 COMPLETE
         self.assertEqual(p["status"], "COMPLETE")
+        self.assertIn("iterations/01-verification.json", p["written"])
+        self.assertIn("output/prd.md", p["written"])
+        self.assertEqual(p["next"][0]["kind"], "deliver", p["next"])
         state = self.read_state(p)
         self.assertEqual(state["iteration"], 1)
         # 事件面合并后:init 不写 transitions;转移条目仍按 v1 事件名记录
@@ -192,15 +186,14 @@ class TestNormalChain(LifecycleBase):
                          snap["state_projection_sha256"])
 
     def test_call_budget_normal_chain(self):
-        # 任务 2.9 中间态:收口四步仍未折叠(2.10 折叠后为 5 次);无显式 validate.py
+        # design §8:正常链固定 5 次调用(init/commit plan/commit artifact/
+        # record_provenance/commit verification);无显式 validate.py
         p = self.init()
         p = self.reach_verifying(p)
         p = self.bind_pass(p)
-        p = h.out_json(self.run_next(p))
-        p = h.out_json(self.run_next(p))
         self.assertEqual(p["status"], "COMPLETE")
         counted = [c for c in self.calls]
-        self.assertLessEqual(len(counted), 10, counted)
+        self.assertEqual(len(counted), 5, counted)
         self.assertNotIn("validate.py", counted)
 
     def test_state_update_appends_ledger_and_known(self):
@@ -227,7 +220,7 @@ class TestNormalChain(LifecycleBase):
     def test_revise_reuses_plan_no_new_plan_file(self):
         p = self.init()
         p = self.reach_verifying(p)
-        # REVISE 分支不得先绑定 PASS:绑定 PASS 后一切覆盖提交被拒绝
+        # REVISE 报告经 commit verification 自动转移(+1 回 EXECUTING)
         rev = h.min_verification(verdict="REVISE",
                                  required_changes=["补齐次级指标口径"])
         rev["verification_input"] = self.snapshot(p)
@@ -235,10 +228,6 @@ class TestNormalChain(LifecycleBase):
         p = h.out_json(self.call(
             "commit.py", "--pm-root", p["pm_root"],
             "verification", str(self.ws / "report-revise.json")))
-        p = h.out_json(self.call(
-            "record_provenance.py", "--pm-root", p["pm_root"], "--bind"))
-        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
-                                "verdict"))
         self.assertEqual(p["status"], "EXECUTING")
         self.assertEqual(p["iteration"], 2)
         pm = Path(p["pm_root"])
@@ -328,16 +317,17 @@ class TestGuardsAndOverwrite(LifecycleBase):
         p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
                                 "verification",
                                 str(self.ws / "report-blocked.json")))
-        p = h.out_json(self.call("record_provenance.py", "--pm-root",
-                                p["pm_root"], "--bind"))
-        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
-                                "verdict"))
         self.assertEqual(p["status"], "WAITING_FOR_INPUT")
         self.assertEqual(self.read_state(p)["resume_to"], "VERIFYING")
+        # 重跑同一 BLOCKED 报告:verdict 转移已发生,判已执行退出 0
+        again = self.call("commit.py", "--pm-root", p["pm_root"],
+                          "verification",
+                          str(self.ws / "report-blocked.json"))
+        self.assertEqual(again.returncode, 0, again.stdout)
         p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
                                 "resume"))
         self.assertEqual(p["status"], "VERIFYING")
-        # 新报告(内容不同)原位覆盖同名 verification 并重新绑定
+        # 新报告(内容不同)原位覆盖同名 verification 并重新绑定+收口
         rev2 = h.min_verification(verdict="PASS")
         rev2["verification_input"] = self.snapshot(p)
         rev2["strengths"] = ["复评后证据充分"]
@@ -345,13 +335,7 @@ class TestGuardsAndOverwrite(LifecycleBase):
         p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
                                 "verification",
                                 str(self.ws / "report-pass.json")))
-        self.assertEqual(proc_next_kind(p), "command")
-        p = h.out_json(self.call("record_provenance.py", "--pm-root",
-                                p["pm_root"], "--bind"))
-        self.assertEqual(proc_next_kind(p), "command")
-        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
-                                "verdict"))
-        self.assertEqual(p["status"], "VERIFYING", "PASS 留在 VERIFYING")
+        self.assertEqual(p["status"], "COMPLETE", "复评 PASS 一步收口")
 
     def test_overwrite_refused_after_bound_pass(self):
         p = self.reach_verifying(self.p)
@@ -465,31 +449,42 @@ class TestBoundariesAndRerun(LifecycleBase):
 
 
 class TestCompleteGuard(LifecycleBase):
-    def test_complete_refuses_when_pass_unbound(self):
-        p = self.init()
-        p = self.reach_verifying(p)
-        proc = self.call("render.py", "--pm-root", p["pm_root"])
-        self.assertEqual(proc.returncode, 0)
-        proc = self.call("transition.py", "--pm-root", p["pm_root"], "complete")
-        self.assertEqual(proc.returncode, 1, proc.stdout)
+    """收口守卫在折叠后的载体:快照缺失、PASS 后内容变化(R2)、5/5 收口(R13)。"""
 
-    def test_complete_refuses_after_pass_content_change(self):
+    def test_verification_refuses_without_snapshot(self):
+        # 没有验证输入(未派发 Verifier)就交 PASS:结构上不可收口
+        p = self.init()
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        report = h.min_verification(verdict="PASS")
+        self.draft("report-nosnap.json", report)
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "verification", str(self.ws / "report-nosnap.json"))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertFalse(h.out_json(proc)["ok"])
+
+    def test_rerun_after_pass_content_change_rejected_by_p1(self):
+        # R2:COMPLETE 后 artifact 被绕过脚本改写,重跑收口命令被 P1 拒绝
         p = self.init()
         p = self.reach_verifying(p)
         p = self.bind_pass(p)
+        self.assertEqual(p["status"], "COMPLETE")
         pm = Path(p["pm_root"])
         art = json.loads((pm / "iterations" / "01-artifact.json")
                          .read_text(encoding="utf-8"))
-        art["artifact"]["title"] = "PASS 之后被改写"
-        # 绕过脚本的直接编辑(模拟真实事故);complete 的守卫必须拦住
+        art["artifact"]["title"] = "收口之后被改写"
         (pm / "iterations" / "01-artifact.json").write_text(
             json.dumps(art, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
-        proc = self.call("render.py", "--pm-root", p["pm_root"])
-        proc = self.call("transition.py", "--pm-root", p["pm_root"], "complete")
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "verification", str(self.ws / "report-pass.json"))
         self.assertEqual(proc.returncode, 1, proc.stdout)
         payload = h.out_json(proc)
         self.assertFalse(payload["ok"])
+        self.assertTrue(any("P1" in str(e.get("reason", ""))
+                            for e in payload["errors"]), payload["errors"])
 
     def test_complete_55_passes(self):
         # 5/5 轮 PASS 正常完成,不因等于上限误判
@@ -510,13 +505,6 @@ class TestCompleteGuard(LifecycleBase):
         p = h.out_json(self.call(
             "commit.py", "--pm-root", p["pm_root"],
             "verification", str(self.report_draft(p, "PASS"))))
-        p = h.out_json(self.call("record_provenance.py", "--pm-root",
-                                p["pm_root"], "--bind"))
-        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
-                                "verdict"))
-        p = h.out_json(self.call("render.py", "--pm-root", p["pm_root"]))
-        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
-                                "complete"))
         self.assertEqual(p["status"], "COMPLETE")
         self.assertEqual(p["iteration"], 5)
 
@@ -541,31 +529,31 @@ class TestProtocolShapes(LifecycleBase):
 
 
 class TestCloseoutReplays(LifecycleBase):
-    """任务 3.2 点名场景的固定回放:仅改 Ledger、手改后重渲染覆盖。"""
+    """磁盘守卫回放:语义字段被绕过脚本改写、手改 output 后重渲染覆盖。"""
 
-    def reach_bound(self):
+    def test_ledger_change_on_disk_blocks_closeout_rerun(self):
+        # R3 同型:收口后 state 语义字段被直接改写(模拟中断窗口的语义修改),
+        # 重跑收口命令被 P1 拦住——交付资格由磁盘一致性守卫
         p = self.init()
         p = self.reach_verifying(p)
-        return self.bind_pass(p)
-
-    def test_ledger_only_change_after_bound_pass_blocks_complete(self):
-        p = self.reach_bound()
-        patch = self.draft("patch.json", {"evidence": [h.min_evidence(i=2)]})
+        p = self.bind_pass(p)
+        pm = Path(p["pm_root"])
+        state = self.read_state(p)
+        state.setdefault("evidence", []).append(h.min_evidence(i=2))
+        (pm / "state.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
         proc = self.call("commit.py", "--pm-root", p["pm_root"],
-                         "state-update", str(patch))
+                        "verification", str(self.ws / "report-pass.json"))
         self.assertEqual(proc.returncode, 1, proc.stdout)
         payload = h.out_json(proc)
         self.assertTrue(any("P1" in str(e.get("reason", ""))
                             for e in payload["errors"]), payload["errors"])
-        # design:105 补丁写入不因写后校验失败回滚;但交付资格被 P1 拦住
-        state = self.read_state(p)
-        self.assertEqual([e["id"] for e in state.get("evidence", [])], ["E2"])
-        proc = self.call("transition.py", "--pm-root", p["pm_root"], "complete")
-        self.assertEqual(proc.returncode, 1, proc.stdout)
 
     def test_hand_edited_output_replaced_by_rerender(self):
         # 纯渲染修复路径:手工改动被重新渲染覆盖,不修改来源 JSON
-        p = self.reach_bound()
+        p = self.init()
+        p = self.reach_verifying(p)  # VERIFYING 即可渲染,无需验证报告
         self.call("render.py", "--pm-root", p["pm_root"])
         out = Path(p["pm_root"]) / "output" / "prd.md"
         out.write_text(out.read_text(encoding="utf-8") + "手工追加\n",
@@ -988,6 +976,150 @@ class TestEventSurfaceMerge(LifecycleBase):
                                  event)
                 self.assertEqual(proc.returncode, 1, proc.stdout)
                 self.assertIn("非法事件", proc.stdout)
+
+
+class TestCloseoutFold(LifecycleBase):
+    """任务 2.10:收口折叠(design §2.3,R30)。
+
+    Why:收口四步(--bind/verdict/render/complete)之间没有模型判断,拆开只
+    制造中断窗口与"未绑定报告"中间态,verdict 值还要模型从报告抄进命令。
+    折叠后 verdict 从报告字段读取,一条命令收敛;中断按报告与状态的组合
+    分支恢复。
+    """
+
+    def to_bound_pass_not_complete(self):
+        """构造"已绑定 PASS、尚未收口"的中断窗口现场(绕过脚本直写)。"""
+        p = self.init()
+        p = self.reach_verifying(p)
+        pm = Path(p["pm_root"])
+        snap = self.snapshot(p)
+        ver = h.min_verification(verdict="PASS")
+        ver["verification_input"] = snap
+        ver["provenance"] = {k: snap[k] for k in
+                             ("algorithm", "plan_path", "artifact_sha256",
+                              "plan_sha256", "state_projection_sha256")}
+        (pm / "iterations" / "01-verification.json").write_text(
+            json.dumps(ver, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        draft = h.min_verification(verdict="PASS")
+        draft["verification_input"] = snap
+        self.draft("report-pass.json", draft)
+        return p
+
+    def commit_ver(self, p, name="report-pass.json"):
+        return self.call("commit.py", "--pm-root", p["pm_root"],
+                         "verification", str(self.ws / name))
+
+    def test_converge_from_unbound_report_on_disk(self):
+        # 边界①:报告已落盘未绑定 → 重跑同命令补绑定并收口
+        p = self.init()
+        p = self.reach_verifying(p)
+        snap = self.snapshot(p)
+        ver = h.min_verification(verdict="PASS")
+        ver["verification_input"] = snap
+        (Path(p["pm_root"]) / "iterations" / "01-verification.json").write_text(
+            json.dumps(ver, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        draft = h.min_verification(verdict="PASS")
+        draft["verification_input"] = snap
+        self.draft("report-pass.json", draft)
+        proc = self.commit_ver(p)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(h.out_json(proc)["status"], "COMPLETE")
+
+    def test_converge_from_bound_untransferred(self):
+        # 边界②:已绑定未转移(状态仍 VERIFYING)→ 重跑即收口,条目不重复
+        p = self.to_bound_pass_not_complete()
+        proc = self.commit_ver(p)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertEqual(payload["status"], "COMPLETE")
+        events = [t["event"] for t in self.read_state(payload)["transitions"]]
+        self.assertEqual(events.count("verdict"), 1)
+        self.assertEqual(events.count("complete"), 1)
+
+    def test_converge_from_rendered_not_complete(self):
+        # 边界③:已渲染未 COMPLETE → 重跑收口,已发布字节不被改写
+        p = self.to_bound_pass_not_complete()
+        self.assertEqual(
+            self.call("render.py", "--pm-root", p["pm_root"]).returncode, 0)
+        out = Path(p["pm_root"]) / "output" / "prd.md"
+        before = out.read_bytes()
+        proc = self.commit_ver(p)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertEqual(h.out_json(proc)["status"], "COMPLETE")
+        self.assertEqual(out.read_bytes(), before)
+
+    def test_complete_rerun_exits_zero(self):
+        # 边界④:已 COMPLETE → 判已执行退出 0,不重复收口条目
+        p = self.init()
+        p = self.reach_verifying(p)
+        p = self.bind_pass(p)
+        self.assertEqual(p["status"], "COMPLETE")
+        again = self.commit_ver(p)
+        self.assertEqual(again.returncode, 0, again.stdout)
+        payload = h.out_json(again)
+        self.assertTrue(any("重跑" in w for w in payload["warnings"]),
+                        payload["warnings"])
+        events = [t["event"] for t in self.read_state(payload)["transitions"]]
+        self.assertEqual(events.count("complete"), 1)
+
+    def test_pass_content_change_in_window_rejected(self):
+        # R30/R2:中断窗口内内容变化,重跑被 P1 拒绝,不写 COMPLETE
+        p = self.to_bound_pass_not_complete()
+        pm = Path(p["pm_root"])
+        art = json.loads((pm / "iterations" / "01-artifact.json")
+                         .read_text(encoding="utf-8"))
+        art["artifact"]["title"] = "窗口内被改写"
+        (pm / "iterations" / "01-artifact.json").write_text(
+            json.dumps(art, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        proc = self.commit_ver(p)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any("P1" in str(e.get("reason", ""))
+                            for e in payload["errors"]), payload["errors"])
+        self.assertEqual(payload["status"], "VERIFYING")
+
+    def test_revise_at_limit_writes_stopped_with_evidence(self):
+        # REVISE 越上限:报告与登记留证,写 STOPPED 拒绝转移
+        p = self.init()  # PLANNING iter1
+        for _ in range(4):
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "need-input"))
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "resume",
+                                    "--invalidate-plan"))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"]))
+        rev = h.min_verification(verdict="REVISE")
+        rev["verification_input"] = self.snapshot(p)
+        self.draft("report-revise.json", rev)
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "verification", str(self.ws / "report-revise.json"))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertEqual(payload["status"], "STOPPED")
+        self.assertTrue((Path(p["pm_root"]) / "iterations" /
+                         "05-verification.json").is_file(), "报告留证")
+        self.assertTrue(any(n["kind"] == "stop" for n in payload["next"]),
+                        payload["next"])
+
+    def test_bound_pass_overwrite_refused_in_window(self):
+        # 同号覆盖守卫:绑定 PASS 存在时,不同内容的报告提交被拒
+        p = self.to_bound_pass_not_complete()
+        rev = h.min_verification(verdict="REVISE")
+        rev["verification_input"] = self.snapshot(p)
+        self.draft("report-revise.json", rev)
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "verification", str(self.ws / "report-revise.json"))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("绑定", proc.stdout)
+        self.assertEqual(h.out_json(proc)["status"], "VERIFYING")
 
 
 if __name__ == "__main__":

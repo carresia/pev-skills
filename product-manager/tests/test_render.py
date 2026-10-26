@@ -483,11 +483,9 @@ class TestProtocol(RenderBase):
         self.assertEqual(payload["errors"], [])
         self.assertEqual(payload["status"], "VERIFYING")
         self.assertEqual(payload["iteration"], 1)
-        self.assertEqual(len(payload["next"]), 1)
-        nxt = payload["next"][0]
-        self.assertEqual(nxt["kind"], "command")
-        self.assertEqual(nxt["argv"][0], "scripts/transition.py")
-        self.assertIn("complete", nxt["argv"])
+        # 收口折叠(任务 2.10):发布已并入 commit verification 的 PASS 收口,
+        # CLI 发布不再返回转移命令(保留作手工修复入口)
+        self.assertEqual(payload["next"], [])
 
     def test_failure_payload_shape(self):
         self.artifact["artifact"].pop("launch_plan")

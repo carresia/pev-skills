@@ -27,6 +27,7 @@ from _common import (  # noqa: E402
     read_json, run, select_plan, write_json_atomic,
 )
 from transition import make_entry  # noqa: E402
+from record_provenance import PROVENANCE_FIELDS, snapshot_for  # noqa: E402
 import validate as validator  # noqa: E402
 from render import RenderError, select_template  # noqa: E402
 from render import TEMPLATES, validate_inputs  # noqa: E402
@@ -91,6 +92,202 @@ def stop_at_limit_commit(pm, state, rep, event, src, it, ref):
     rep.next.append({"kind": "stop",
                      "reason": "达到迭代上限;恢复仅经 resume --raise-limit "
                                "且记录授权"})
+
+
+def run_script_json(script, pm):
+    """跑 scripts/ 下脚本并解析其 JSON 输出;返回 (returncode, payload)。"""
+    proc = subprocess.run(
+        [sys.executable, str(SKILL_ROOT / "scripts" / script),
+         "--pm-root", str(pm)],
+        capture_output=True, text=True)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {"ok": proc.returncode == 0, "errors": [
+            {"file": script, "json_path": None,
+             "reason": f"输出异常: {proc.stdout[:200]}"}],
+            "warnings": [], "written": []}
+    return proc.returncode, payload
+
+
+def commit_verification(pm, state, rep, draft, iteration, status):
+    """收口折叠(design §2.3,任务 2.10):一条命令完成
+    落盘 → 绑定(复算三摘要)→ 按 verdict 转移 → PASS 分支 render+validate+COMPLETE。
+    verdict 从报告字段读取,不经命令参数;重跑按报告与状态的组合分支收敛。
+    """
+    ver_name = f"{iteration:02d}-verification.json"
+    doc_name = f"iterations/{ver_name}"
+    ver_path = pm / "iterations" / ver_name
+    snap_path = pm / "iterations" / f"{iteration:02d}-verification-input.json"
+    snap = read_json(snap_path) if snap_path.is_file() else None
+    disk = read_json(ver_path) if ver_path.is_file() else None
+    same_report = (isinstance(disk, dict) and snap is not None
+                   and disk.get("verdict") == draft.get("verdict")
+                   and disk.get("verification_input") == draft.get("verification_input")
+                   and draft.get("verification_input") == snap)
+
+    # —— 重跑收敛:状态已离开 VERIFYING 时的组合分支 ——
+    if status != "VERIFYING":
+        if status == "COMPLETE" and same_report \
+                and "provenance" in disk and disk.get("verdict") == "PASS":
+            # 已 COMPLETE:validate 干净才判已执行(内容变化重跑被 P1 拒绝,R2)
+            rc, payload = run_script_json("validate.py", pm)
+            for e in payload.get("errors", []):
+                rep.error(e.get("file"), e.get("json_path"), e.get("reason"))
+            if rc != 0 or rep.errors:
+                return rep.emit()
+            rep.warn("重跑判已执行,收口已完成")
+            rep.next.append({"kind": "deliver",
+                             "notes": "向用户交付 output/ 下最终文档"})
+            return rep.emit()
+        entries = state.get("transitions") or []
+        last = entries[-1] if entries else None
+        if (isinstance(last, dict) and last.get("event") == "verdict"
+                and last.get("to_iteration") == iteration
+                and last.get("to") == status
+                and isinstance(disk, dict) and "provenance" in disk
+                and disk.get("verdict") == draft.get("verdict")
+                and disk.get("verification_input") == draft.get("verification_input")):
+            rep.warn("重跑判已执行,verdict 转移已完成")
+            if draft.get("verdict") == "REVISE":
+                rep.next.append({"kind": "draft", "target": "artifact",
+                                 "notes": "按 required_changes 修订 Artifact 后重新提交"})
+            elif draft.get("verdict") == "REPLAN":
+                rep.next.append({"kind": "draft", "target": "plan",
+                                 "notes": "以 agents/planner.md 重新起草 Plan"})
+            else:
+                rep.next.append({"kind": "ask-user",
+                                 "items": ["缺什么 / 为什么重要 / 怎么获取"]})
+            return rep.emit()
+        rep.error("state.json", "$.status",
+                  f"阶段不匹配:verification 提交要求 status=VERIFYING,"
+                  f"当前为 {status}")
+        return rep.emit()
+
+    # —— VERIFYING:草稿校验(schema/R5/复述) ——
+    schema = json.loads((validator.SCHEMA_DIR / SCHEMA_OF["verification"])
+                        .read_text(encoding="utf-8"))
+    validator.validate(draft, schema, doc_name, "$", rep)
+    rc = draft.get("required_changes")
+    n = len(rc) if isinstance(rc, list) else 0
+    if draft.get("verdict") == "PASS" and n > 0:
+        rep.error(doc_name, "$.required_changes", "R5: PASS 时 required_changes 必须为空")
+    if draft.get("verdict") == "REVISE" and n == 0:
+        rep.error(doc_name, "$.required_changes", "R5: REVISE 时 required_changes 必须非空")
+    if snap is None:
+        rep.error(doc_name, "$.verification_input",
+                  "快照不存在,先运行 record_provenance.py 再派发与提交报告")
+    elif draft.get("verification_input") != snap:
+        rep.error(doc_name, "$.verification_input",
+                  "报告复述与快照不一致,不可提交;核对输入是否在派发后变更")
+    # 绑定 PASS 覆盖守卫:同号覆盖仅允许"当轮无绑定 PASS"(design §2.3)
+    if (isinstance(disk, dict) and "provenance" in disk
+            and disk.get("verdict") == "PASS" and not same_report):
+        rep.error(doc_name, "$",
+                  "当前轮已存在绑定 PASS 的 verification,覆盖提交被拒绝;"
+                  "收口重跑用同一报告;重新验证须换轮")
+    if rep.errors:
+        return rep.emit()
+
+    # —— 绑定与落盘(报告带 provenance 一次原子写) ——
+    if same_report and "provenance" in disk:
+        report = disk  # 已绑定未转移/已渲染未 COMPLETE:续走,不重写
+    else:
+        sel = select_plan(pm, state, iteration)
+        if sel is None:
+            rep.error("state.json", "$.plans", "找不到有效 Plan,无法绑定")
+            return rep.emit()
+        plan_doc = read_json(sel[1])
+        plan_name = sel[1].relative_to(pm).as_posix()
+        art_name = f"{iteration:02d}-artifact.json"
+        artifact_doc = read_json(pm / "iterations" / art_name)
+        if plan_doc is None or artifact_doc is None:
+            rep.error("state.json", "$", "当轮 Plan/Artifact 缺失或不可解析,无法绑定")
+            return rep.emit()
+        current = snapshot_for(state, plan_doc, plan_name, artifact_doc,
+                               iteration)
+        for key, conflict_file in (
+                ("artifact_sha256", f"iterations/{art_name}"),
+                ("plan_sha256", plan_name),
+                ("state_projection_sha256", "state.json")):
+            if current[key] != snap[key]:
+                rep.error(conflict_file, "$",
+                          "输入在派发后变更,provenance 复算不一致,该报告作废;"
+                          "恢复:重跑 record_provenance.py 原位重写快照并重新派发 Verifier")
+                return rep.emit()
+        report = dict(draft)
+        report["provenance"] = {k: snap[k] for k in PROVENANCE_FIELDS}
+        write_json_atomic(ver_path, report)
+        rep.written.append(doc_name)
+
+    verdict = report.get("verdict")
+    ref = canonical_sha256(report)
+
+    if verdict == "PASS":
+        # —— PASS 收口:validate 硬闸(P1 复算)→ render 发布 → 写 COMPLETE ——
+        rc, payload = run_script_json("validate.py", pm)
+        for e in payload.get("errors", []):
+            rep.error(e.get("file"), e.get("json_path"), e.get("reason"))
+        if rc != 0 or rep.errors:
+            return rep.emit()
+        rc, payload = run_script_json("render.py", pm)
+        for e in payload.get("errors", []):
+            rep.error(e.get("file"), e.get("json_path"), e.get("reason"))
+        if rc != 0 or rep.errors:
+            return rep.emit()
+        rep.written.extend(payload.get("written", []))
+        art = read_json(pm / "iterations" / f"{iteration:02d}-artifact.json")
+        state.setdefault("transitions", []).append(
+            make_entry("verdict", "VERIFYING", "VERIFYING",
+                       iteration, iteration, ref, None))
+        state.setdefault("transitions", []).append(
+            make_entry("complete", "VERIFYING", "COMPLETE",
+                       iteration, iteration,
+                       canonical_sha256(art) if art is not None else None,
+                       None))
+        state["status"] = "COMPLETE"
+        state.pop("resume_to", None)
+        write_json_atomic(pm / "state.json", state)
+        rep.status = "COMPLETE"
+        rep.iteration = iteration
+        rep.next.append({"kind": "deliver",
+                         "notes": "向用户交付 output/ 下最终文档"})
+        return rep.emit()
+
+    # —— REVISE / REPLAN / BLOCKED:按 verdict 自动转移 ——
+    plus_one = verdict in ("REVISE", "REPLAN")
+    new_it = iteration + 1 if plus_one else iteration
+    if plus_one and new_it > state.get("max_iterations", 5):
+        state["status"] = "STOPPED"
+        state.pop("resume_to", None)
+        state.setdefault("transitions", []).append(
+            make_entry("verdict", "VERIFYING", "STOPPED", iteration,
+                       iteration, ref, {"verdict": verdict}))
+        write_json_atomic(pm / "state.json", state)
+        rep.status = "STOPPED"
+        rep.iteration = iteration
+        rep.warn(f"verdict={verdict} 的 iteration+1 超过 max_iterations,"
+                 "已写 STOPPED;须向用户报告当前最佳结论、critical_issues、"
+                 "evidence_gaps")
+        rep.next.append({"kind": "stop",
+                         "reason": "达到迭代上限;恢复仅经 resume --raise-limit "
+                                   "且记录授权"})
+        return rep.emit()
+    dst = {"REVISE": "EXECUTING", "REPLAN": "PLANNING"}.get(
+        verdict, "WAITING_FOR_INPUT")
+    transfer(pm, state, rep, "verdict", "VERIFYING", dst,
+             iteration, new_it, ref,
+             resume_to="VERIFYING" if dst == "WAITING_FOR_INPUT" else None)
+    if verdict == "REVISE":
+        rep.next.append({"kind": "draft", "target": "artifact",
+                         "notes": "按 required_changes 修订 Artifact 后重新提交"})
+    elif verdict == "REPLAN":
+        rep.next.append({"kind": "draft", "target": "plan",
+                         "notes": "以 agents/planner.md 重新起草 Plan,经 commit.py plan 提交"})
+    else:
+        rep.next.append({"kind": "ask-user",
+                         "items": ["缺什么 / 为什么重要 / 怎么获取"]})
+    return rep.emit()
 
 
 def post_validate(pm, rep):
@@ -281,6 +478,11 @@ def main():
                   code="E_FROZEN_STATE")
         return rep.emit()
 
+    # 收口折叠(任务 2.10):verification 一步完成落盘/绑定/按 verdict 转移/
+    # PASS 分支 render+validate+COMPLETE(verdict 从报告字段读取)
+    if sub == "verification":
+        return commit_verification(pm, state, rep, draft, iteration, status)
+
     if sub == "state-update":
         if status in ("COMPLETE", "STOPPED"):
             rep.error("state.json", "$.status",
@@ -374,21 +576,6 @@ def main():
             else:
                 check_artifact_b_c(draft, plan_doc, sel[1].name, state,
                                    doc_name, rep)
-    if sub == "verification":
-        rc = draft.get("required_changes")
-        n = len(rc) if isinstance(rc, list) else 0
-        if draft.get("verdict") == "PASS" and n > 0:
-            rep.error(doc_name, "$.required_changes", "R5: PASS 时 required_changes 必须为空")
-        if draft.get("verdict") == "REVISE" and n == 0:
-            rep.error(doc_name, "$.required_changes", "R5: REVISE 时 required_changes 必须非空")
-        snap_path = pm / "iterations" / f"{iteration:02d}-verification-input.json"
-        snap = read_json(snap_path) if snap_path.is_file() else None
-        if snap is None:
-            rep.error(doc_name, "$.verification_input",
-                      "快照不存在,先运行 record_provenance.py 再派发与提交报告")
-        elif draft.get("verification_input") != snap:
-            rep.error(doc_name, "$.verification_input",
-                      "报告复述与快照不一致,不可提交;核对输入是否在派发后变更")
     if rep.errors:
         return rep.emit()
 
@@ -438,10 +625,6 @@ def main():
                      resume_to="EXECUTING")
             rep.next.append({"kind": "ask-user",
                              "items": ["缺什么 / 为什么重要 / 怎么获取"]})
-    else:  # verification
-        rep.next.append({"kind": "command", "cwd": str(SKILL_ROOT),
-                         "argv": ["scripts/record_provenance.py",
-                                  "--pm-root", str(pm), "--bind"]})
     return rep.emit()
 
 

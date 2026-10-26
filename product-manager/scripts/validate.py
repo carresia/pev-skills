@@ -27,8 +27,9 @@ minimum/maximum/pattern)外,强制以下语义规则——这些是状态机的�
         快照,按当前投影复算历史报告会把合法演进误报为错误
     P2  COMPLETE 收口门:当前轮必须有 verification 且 verdict=PASS;
         完全没有验证记录却标 COMPLETE 是错误
-    P3  未绑定中间态:当轮报告无 provenance 属合法中间态,结构通过,
-        但须警告"不可消费 verdict、不可交付"
+    P3  未绑定中间态(存量口径):当轮报告无 provenance 属合法中间态,
+        结构通过,但须警告"不可消费 verdict、不可交付";新链路的报告随
+        commit verification 提交即绑定,此警告只对存量轮次出现
     P4  旧轮次(或 COMPLETE 旧数据)缺 provenance:格式或仍有效,但须警告
         "旧轮次缺绑定,格式或仍有效但不可交付",不得据此直接交付
 
@@ -267,7 +268,9 @@ def binding_gates(rep, state, verifications, iteration):
         if status == "COMPLETE":
             rep.warn(f"{cur_name}: 旧轮次缺绑定,格式或仍有效但不可交付")
         elif status == "VERIFYING":
-            rep.warn(f"{cur_name}: 当轮报告未绑定,不可消费 verdict、不可交付")
+            rep.warn(f"{cur_name}: 当轮报告未绑定(存量轮次口径;"
+                     "新链路的报告随 commit verification 提交即绑定),"
+                     "不可消费 verdict、不可交付")
         return
 
     if status == "COMPLETE" and cur.get("verdict") != "PASS":
