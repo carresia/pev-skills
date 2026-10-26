@@ -66,8 +66,12 @@ class Reporter:
         """命令级错误:file 固定为命令名,json_path 为 null。"""
         self.error(command_name, None, reason, code=code)
 
-    def warn(self, text):
-        self.warnings.append(trunc(text))
+    def warn(self, text, code=None):
+        """无 code 时保持纯字符串(存量兼容);带 code 时为 {text, code} 条目。"""
+        if code:
+            self.warnings.append({"text": trunc(text), "code": code})
+        else:
+            self.warnings.append(trunc(text))
 
     def emit(self):
         payload = {

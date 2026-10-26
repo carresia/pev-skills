@@ -580,6 +580,41 @@ class TestValidateProtocol(CloseoutTestCase):
         proc = h.run_validate(self.pm.root)
         self.assertEqual(proc.returncode, 0, proc.stdout)
 
+    def test_p2_error_carries_code(self):
+        # 任务 3.6:COMPLETE 无 PASS 的 P2 错误带 code(其余存量 reason 不回填)
+        self.pm.state = h.min_state(status="COMPLETE", iteration=1,
+                                    evidence=[h.min_evidence()])
+        self.pm.flush_state()
+        self.pm.write_doc(1, "plan", h.min_plan())
+        self.pm.write_doc(1, "artifact", h.min_artifact())
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any(e.get("code") == "P2_NO_PASS_AT_COMPLETE"
+                            for e in payload["errors"]), payload["errors"])
+
+    def test_p3_warning_carries_code(self):
+        # 未绑定当轮报告(存量口径)的 P3 警告带 code
+        self.build_chain(status="VERIFYING", bind=False)
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        coded = [w for w in payload["warnings"]
+                 if isinstance(w, dict) and w.get("code") == "P3_UNBOUND_CURRENT"]
+        self.assertTrue(coded, payload["warnings"])
+        self.assertTrue(any("不可交付" in str(w) for w in payload["warnings"]))
+
+    def test_p4_warning_carries_code(self):
+        # 旧轮次缺绑定的 P4 警告带 code
+        self.build_chain(status="COMPLETE", bind=False)
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        coded = [w for w in payload["warnings"]
+                 if isinstance(w, dict) and w.get("code") == "P4_LEGACY_UNBOUND"]
+        self.assertTrue(coded, payload["warnings"])
+        self.assertTrue(any("旧轮次缺绑定" in str(w) for w in payload["warnings"]))
+
 
 if __name__ == "__main__":
     unittest.main()

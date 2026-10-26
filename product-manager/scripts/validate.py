@@ -255,28 +255,32 @@ def binding_gates(rep, state, verifications, iteration):
     for name, ver in verifications:
         nn = ver_nn(name)
         if nn is not None and nn < iteration and "provenance" not in ver:
-            rep.warn(f"{name}: 旧轮次缺绑定,格式或仍有效但不可交付")
+            rep.warn(f"{name}: 旧轮次缺绑定,格式或仍有效但不可交付",
+                     code="P4_LEGACY_UNBOUND")
 
     if cur is None:
         if status == "COMPLETE":
             rep.error(cur_name, "$",
                       "P2: state 为 COMPLETE 但当前轮 verification 不存在;"
-                      "磁盘记录显示没有通过检查却标成 COMPLETE,须回退状态或补齐验证轮")
+                      "磁盘记录显示没有通过检查却标成 COMPLETE,须回退状态或补齐验证轮",
+                      code="P2_NO_PASS_AT_COMPLETE")
         return
 
     if "provenance" not in cur:
         if status == "COMPLETE":
-            rep.warn(f"{cur_name}: 旧轮次缺绑定,格式或仍有效但不可交付")
+            rep.warn(f"{cur_name}: 旧轮次缺绑定,格式或仍有效但不可交付",
+                     code="P4_LEGACY_UNBOUND")
         elif status == "VERIFYING":
             rep.warn(f"{cur_name}: 当轮报告未绑定(存量轮次口径;"
                      "新链路的报告随 commit verification 提交即绑定),"
-                     "不可消费 verdict、不可交付")
+                     "不可消费 verdict、不可交付",
+                     code="P3_UNBOUND_CURRENT")
         return
 
     if status == "COMPLETE" and cur.get("verdict") != "PASS":
         rep.error(cur_name, "$.verdict",
                   f"P2: state 为 COMPLETE 但当前轮 verdict 为 {cur.get('verdict')!r},"
-                  "只有 PASS 可收口")
+                  "只有 PASS 可收口", code="P2_NO_PASS_AT_COMPLETE")
 
 
 def check_b_c(rep, state, artifacts, iteration, pm_dir):
