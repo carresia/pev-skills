@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""产物提交:落盘 iterations/<N>-<type>.json、更新登记册、写后校验。
+"""产物提交:落盘 iterations/<N>-<type>.json、更新登记册、写后校验、阶段转移。
 
 用法:
     python3 commit.py --pm-root <pm 目录绝对路径> plan|artifact|verification <草稿绝对路径>
     python3 commit.py --pm-root <pm 目录绝对路径> state-update <补丁绝对路径>
 
-提交顺序固定:草稿校验 → 产物落盘(临时+改名) → 登记册 → validate;
-任一步后中断,重跑同一命令即收敛。覆盖权限:编号=当前 iteration、当前轮
+提交顺序固定:草稿校验 → 产物落盘(临时+改名) → 登记册 → validate(转移
+硬闸) → 阶段转移;任一步后中断,重跑同一命令即收敛。事件面合并(design
+§1.1):commit plan 成功即转 EXECUTING(plan-validated 边并入);commit
+artifact 按 status 三分支转移(completed→VERIFYING / replan_required→
+PLANNING+1·上限 / blocked→WAITING_FOR_INPUT+resume_to=EXECUTING);
+transitions 日志仍按 v1 事件名记录。覆盖权限:编号=当前 iteration、当前轮
 不存在绑定 PASS 的 verification、且与当前阶段匹配;编号更小一律拒绝
 (历史轮只读,复用不等于可改写)。state-update 只接受八个语义路径的补丁。
 """
@@ -19,9 +23,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import (  # noqa: E402
-    Reporter, SKILL_ROOT, load_state, parse_pm_root, read_json, run,
-    select_plan, write_json_atomic,
+    Reporter, SKILL_ROOT, canonical_sha256, load_state, parse_pm_root,
+    read_json, run, select_plan, write_json_atomic,
 )
+from transition import make_entry  # noqa: E402
 import validate as validator  # noqa: E402
 from render import RenderError, select_template  # noqa: E402
 from render import TEMPLATES, validate_inputs  # noqa: E402
@@ -37,6 +42,55 @@ SCHEMA_OF = {"plan": "plan.schema.json", "artifact": "artifact.schema.json",
 ID_RE = re.compile(r"^E[1-9][0-9]*$")
 EVIDENCE_TYPES = ("FACT", "INFERENCE", "HYPOTHESIS", "UNKNOWN")
 CONFIDENCE = ("high", "medium", "low")
+ARTIFACT_EVENT = {"completed": "artifact-validated",
+                  "replan_required": "executor-replan",
+                  "blocked": "executor-blocked"}
+
+
+def already_transferred(state, event, ref, iteration):
+    """本命令对应的阶段转移是否已随先前一次执行落盘(幂等重跑判定)。"""
+    entries = state.get("transitions") or []
+    if not entries:
+        return False
+    last = entries[-1]
+    return (last.get("event") == event
+            and last.get("ref_sha256") == ref
+            and last.get("to_iteration") == iteration
+            and last.get("to") == state.get("status"))
+
+
+def transfer(pm, state, rep, event, src, dst, it, new_it, ref,
+             resume_to=None):
+    """写状态转移(status/iteration/resume_to/transitions)并原子落盘。"""
+    entry = make_entry(event, src, dst, it, new_it, ref, None)
+    state["status"] = dst
+    if new_it != it:
+        state["iteration"] = new_it
+    if dst == "WAITING_FOR_INPUT":
+        state["resume_to"] = resume_to
+    else:
+        state.pop("resume_to", None)
+    state.setdefault("transitions", []).append(entry)
+    write_json_atomic(pm / "state.json", state)
+    rep.status = dst
+    rep.iteration = new_it
+
+
+def stop_at_limit_commit(pm, state, rep, event, src, it, ref):
+    """replan 分支越上限:产物与登记册已落盘留证,写 STOPPED 拒绝该转移。"""
+    state["status"] = "STOPPED"
+    state.pop("resume_to", None)
+    entry = make_entry(event, src, "STOPPED", it, it, ref,
+                       {"requested": event})
+    state.setdefault("transitions", []).append(entry)
+    write_json_atomic(pm / "state.json", state)
+    rep.status = "STOPPED"
+    rep.iteration = it
+    rep.warn("iteration+1 超过 max_iterations,已写 STOPPED;"
+             "须向用户报告当前最佳结论、critical_issues、evidence_gaps")
+    rep.next.append({"kind": "stop",
+                     "reason": "达到迭代上限;恢复仅经 resume --raise-limit "
+                               "且记录授权"})
 
 
 def post_validate(pm, rep):
@@ -210,7 +264,7 @@ def main():
     if not isinstance(iteration, int) or iteration < 1:
         rep.error("state.json", "$.iteration",
                   f"iteration 须为正整数才能提交产物,实际为 {iteration!r};"
-                  "先运行 transition.py start-planning")
+                  "init 建轮即 iteration=1,请核对轮次状态")
         return rep.emit()
     status = rep.status
 
@@ -266,6 +320,33 @@ def main():
         return rep.emit()
     stage = STAGE_OF[sub]
     if status != stage:
+        # 事件面合并后的幂等重跑:转移已随本命令落盘 → 判已执行退出 0
+        rerun_event = ("plan-validated" if sub == "plan"
+                       else ARTIFACT_EVENT.get(draft.get("status")))
+        if rerun_event and already_transferred(
+                state, rerun_event, canonical_sha256(draft), iteration):
+            rerun_name = f"{iteration:02d}-{sub}.json"
+            reg = state.setdefault(sub + "s", [])
+            if rerun_name not in reg:  # 收敛:修复被回滚的登记册
+                reg.append(rerun_name)
+                write_json_atomic(pm / "state.json", state)
+            rep.warn("重跑判已执行,未重复转移")
+            if sub == "plan":
+                rep.next.append({"kind": "draft", "target": "artifact",
+                                 "notes": "以 agents/executor.md 起草 Artifact,"
+                                          "经 commit.py artifact 提交"})
+            elif draft.get("status") == "completed":
+                rep.next.append({"kind": "command", "cwd": str(SKILL_ROOT),
+                                 "argv": ["scripts/record_provenance.py",
+                                          "--pm-root", str(pm)]})
+            elif draft.get("status") == "replan_required":
+                rep.next.append({"kind": "draft", "target": "plan",
+                                 "notes": "按 replan_reason 重新规划,"
+                                          "经 commit.py plan 提交"})
+            else:
+                rep.next.append({"kind": "ask-user",
+                                 "items": ["缺什么 / 为什么重要 / 怎么获取"]})
+            return rep.emit()
         rep.error("state.json", "$.status",
                   f"阶段不匹配:{sub} 提交要求 status={stage},当前为 {status}")
         return rep.emit()
@@ -311,7 +392,7 @@ def main():
     if rep.errors:
         return rep.emit()
 
-    # 产物落盘 → 登记册(同一次 state 原子写) → 写后校验
+    # 产物落盘 → 登记册(同一次 state 原子写) → 写后校验(转移硬闸) → 阶段转移
     write_json_atomic(pm / "iterations" / name, draft)
     rep.written.append(doc_name)
     if sub in ("plan", "artifact"):
@@ -324,18 +405,40 @@ def main():
     if rep.errors:
         return rep.emit()
 
+    # 事件面合并(任务 2.9):阶段推进随提交自动发生,日志按 v1 事件名记录
+    ref = canonical_sha256(draft)
     if sub == "plan":
-        rep.next.append({"kind": "command", "cwd": str(SKILL_ROOT),
-                         "argv": ["scripts/transition.py", "--pm-root",
-                                  str(pm), "plan-validated"]})
+        transfer(pm, state, rep, "plan-validated", "PLANNING", "EXECUTING",
+                 iteration, iteration, ref)
+        rep.next.append({"kind": "draft", "target": "artifact",
+                         "notes": "以 agents/executor.md 起草 Artifact,"
+                                  "经 commit.py artifact 提交"})
     elif sub == "artifact":
-        event = {"completed": "artifact-validated",
-                 "replan_required": "executor-replan",
-                 "blocked": "executor-blocked"}[draft.get("status")]
-        rep.next.append({"kind": "command", "cwd": str(SKILL_ROOT),
-                         "argv": ["scripts/transition.py", "--pm-root",
-                                  str(pm), event]})
-    else:
+        art_status = draft.get("status")
+        if art_status == "completed":
+            transfer(pm, state, rep, "artifact-validated", "EXECUTING",
+                     "VERIFYING", iteration, iteration, ref)
+            rep.next.append({"kind": "command", "cwd": str(SKILL_ROOT),
+                             "argv": ["scripts/record_provenance.py",
+                                      "--pm-root", str(pm)]})
+        elif art_status == "replan_required":
+            new_it = iteration + 1
+            if new_it > state.get("max_iterations", 5):
+                stop_at_limit_commit(pm, state, rep, "executor-replan",
+                                     "EXECUTING", iteration, ref)
+                return rep.emit()
+            transfer(pm, state, rep, "executor-replan", "EXECUTING",
+                     "PLANNING", iteration, new_it, ref)
+            rep.next.append({"kind": "draft", "target": "plan",
+                             "notes": "按 replan_reason 重新规划,"
+                                      "经 commit.py plan 提交"})
+        else:  # blocked
+            transfer(pm, state, rep, "executor-blocked", "EXECUTING",
+                     "WAITING_FOR_INPUT", iteration, iteration, ref,
+                     resume_to="EXECUTING")
+            rep.next.append({"kind": "ask-user",
+                             "items": ["缺什么 / 为什么重要 / 怎么获取"]})
+    else:  # verification
         rep.next.append({"kind": "command", "cwd": str(SKILL_ROOT),
                          "argv": ["scripts/record_provenance.py",
                                   "--pm-root", str(pm), "--bind"]})

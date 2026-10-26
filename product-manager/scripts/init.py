@@ -6,10 +6,11 @@
         [--carry-from <旧轮目录名>]
     python3 init.py --locate --workspace <含 .pev/ 的目录>
 
-objective 缺 goal(字段不存在、为 null 或空白串)时置 WAITING_FOR_INPUT +
-resume_to="PLANNING";target_metric 缺失与 baseline 为 null 是 schema 合法
-状态,仅 warnings 提示。同日已有同目标的活跃轮次 → 幂等报告现状不重建;
-同日新目标 → 目录名追加 -2、-3。
+建轮即入阶段(design §5.1,事件面合并):goal 齐全 → PLANNING、iteration=1;
+goal 缺失 → WAITING_FOR_INPUT + resume_to="PLANNING"、iteration=1(消除
+iter=0 死角)。init 不追加 transitions 条目(建轮写入即初值);同日已有同
+目标的活跃轮次 → 幂等报告现状不重建;同日新目标 → 目录名追加 -2、-3。
+target_metric 缺失与 baseline 为 null 是 schema 合法状态,仅 warnings 提示。
 
 --carry-from(换轮携账本,design §4.1):旧轮须为终态(COMPLETE/STOPPED/
 SUPERSEDED;活轮该 resume/reopen,不给携账本);把旧轮八字段语义投影
@@ -38,13 +39,6 @@ ACTIVE_STATUSES = {"INIT", "PLANNING", "EXECUTING", "VERIFYING",
                    "WAITING_FOR_INPUT"}
 TERMINAL_STATUSES = {"COMPLETE", "STOPPED", "SUPERSEDED"}
 ROUND_NAME_RE = re.compile(r"prd-(\d{4}-\d{2}-\d{2})(?:-(\d+))?$")
-
-
-def transition_next(pm_dir, event, *extra):
-    """构造指向 transition.py 的下一条 command 类 next。"""
-    return {"kind": "command", "cwd": str(SKILL_ROOT),
-            "argv": ["scripts/transition.py", "--pm-root", str(pm_dir),
-                     event, *extra]}
 
 
 def next_free_round(pev_dir, base):
@@ -196,7 +190,16 @@ def main():
         if carry_from is not None:
             rep.warn("--carry-from 未生效:幂等续用既有活跃轮,不携账本")
         if state is not None and rep.status == "INIT":
-            rep.next.append(transition_next(same / "pm", "start-planning"))
+            # 存量 INIT 轮(本 change 前创建):start-planning 已并入 init,无推进命令
+            rep.warn("存量 INIT 轮无阶段推进命令;继续工作:supersede 换轮后 "
+                     "init --carry-from,或人工确认废弃")
+            rep.next.append({"kind": "ask-user",
+                             "items": ["存量 INIT 轮处置:换轮(supersede + "
+                                       "carry-from)或确认废弃"]})
+        elif state is not None and rep.status == "PLANNING":
+            rep.next.append({"kind": "draft", "target": "plan",
+                             "notes": "以 agents/planner.md 起草 Plan,"
+                                      "经 commit.py plan 提交"})
         elif state is not None and rep.status == "WAITING_FOR_INPUT":
             rep.next.append({
                 "kind": "ask-user",
@@ -227,10 +230,12 @@ def main():
     (pm_dir / "iterations").mkdir(exist_ok=True)
     rep.pm_root = str(pm_dir)
 
+    # 建轮即 PLANNING(WAITING 变体同 iteration=1,消除 iter=0 死角);
+    # init 不追加 transitions 条目(建轮写入即初值,design §5.1)
     state = {
         "objective": objective,
-        "status": "WAITING_FOR_INPUT" if goal_missing else "INIT",
-        "iteration": 0,
+        "status": "WAITING_FOR_INPUT" if goal_missing else "PLANNING",
+        "iteration": 1,
         "max_iterations": 5,
     }
     if goal_missing:
@@ -258,7 +263,9 @@ def main():
             "items": ["objective.goal 缺失:缺什么 / 为什么重要 / 怎么获取"],
         })
     else:
-        rep.next.append(transition_next(pm_dir, "start-planning"))
+        rep.next.append({"kind": "draft", "target": "plan",
+                         "notes": "以 agents/planner.md 起草 Plan,"
+                                  "经 commit.py plan 提交"})
     return rep.emit()
 
 

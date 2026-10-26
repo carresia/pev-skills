@@ -4,20 +4,22 @@
 用法:
     python3 transition.py --pm-root <pm 目录绝对路径> <事件> [旗标]
 
-事件:start-planning | need-input | plan-validated | executor-replan |
-executor-blocked | artifact-validated | verdict | complete | resume |
-reopen | authorized-resume | supersede。旗标:resume 的 --invalidate-plan
-变体;reopen 的 --note <prd_gaps 要点>(必填);authorized-resume 的
---max-iterations <新上限>(必填);supersede 的 --note <废弃原因>(必填)。
+事件:need-input | resume | reopen | supersede | verdict | complete。
+旗标:resume 的 --invalidate-plan 变体与 --raise-limit <新上限> 变体;
+reopen 的 --note <prd_gaps 要点>(必填);supersede 的 --note <废弃原因>
+(必填)。阶段推进事件(start-planning/plan-validated/artifact-validated/
+executor-replan/executor-blocked)已并入 init/commit,authorized-resume 已
+并入 resume --raise-limit——本命令面不再接受它们(任务 2.9 事件面合并);
+transitions 日志仍按 v1 事件名记录,存量日志可读。
 
 再进入类事件的触发场景(区别在于轮次当前处于什么状态):
   resume            轮次未结束,停在 WAITING_FOR_INPUT 等用户拍板(开放问题/
-                    待裁定项);用户回复后触发,回 PLANNING。回答推翻现有计划时
-                    加 --invalidate-plan。
+                    待裁定项);用户回复后触发,回 resume_to 记录的阶段。
+                    回答推翻现有计划时加 --invalidate-plan;STOPPED 轮获
+                    用户提额授权后用 --raise-limit <N>(N 大于当前上限,
+                    param 记新上限)。
   reopen            轮次已 COMPLETE(已交付),下游 requirement-clarify 打回
                     prd_gaps;iteration+1 回 PLANNING 重规划,--note 必填。
-  authorized-resume 轮次达到迭代上限被写 STOPPED;用户明确授权提高上限后
-                    触发,--max-iterations 必填。
   supersede         目标、范围、优先级或交付物形态变更,废弃现轮换新轮;
                     任何状态→SUPERSEDED(不可逆终态,一切写入冻结),
                     --note 必填;继任轮由 init.py --carry-from 创建。
@@ -42,19 +44,15 @@ from _common import (  # noqa: E402
 )
 
 EVENT_SOURCE = {
-    "start-planning": "INIT",
     "need-input": "PLANNING",
-    "plan-validated": "PLANNING",
-    "executor-replan": "EXECUTING",
-    "executor-blocked": "EXECUTING",
-    "artifact-validated": "EXECUTING",
     "verdict": "VERIFYING",
     "complete": "VERIFYING",
     "resume": "WAITING_FOR_INPUT",
     "reopen": "COMPLETE",
-    "authorized-resume": "STOPPED",
     "supersede": None,  # 任何状态可触发,见 ANY_SOURCE_EVENTS
 }
+# 内部事件:命令面已并入他处,仅用于转移日志与重跑判定,不接受 CLI 直调
+INTERNAL_SOURCE = {"authorized-resume": "STOPPED"}
 RESUME_STAGES = ("PLANNING", "EXECUTING", "VERIFYING")
 # 无单一源状态的事件:supersede 从任何状态(含终态)触发;
 # 已处 SUPERSEDED 时的放行规则见 main 的终态冻结检查
@@ -85,7 +83,7 @@ def classify(state, event, param, ref):
         if any(t.get("event") == "resume" and norm(t.get("param")) == norm(param)
                for t in transitions):
             return "done"
-    if status == EVENT_SOURCE.get(event):
+    if status == EVENT_SOURCE.get(event) or status == INTERNAL_SOURCE.get(event):
         return "execute"
     if event in ANY_SOURCE_EVENTS and status != "SUPERSEDED":
         return "execute"
@@ -108,9 +106,7 @@ def latest_doc(pm, iteration, kind):
 def derive_next(pm, state, event, branch=None):
     """按事件表与当前状态推导下一步(结构化对象数组)。"""
     status = state.get("status")
-    if event == "start-planning" or event == "reopen" \
-            or event == "authorized-resume" or branch == "REPLAN" \
-            or event == "executor-replan":
+    if event == "reopen" or event == "authorized-resume" or branch == "REPLAN":
         return [{"kind": "draft", "target": "plan",
                  "notes": "以 agents/planner.md 起草 Plan,经 commit.py plan 提交"}]
     if event == "supersede":
@@ -118,17 +114,10 @@ def derive_next(pm, state, event, branch=None):
                  "notes": "换轮:起草新 objective 后以 init.py --objective <草稿> "
                           "--workspace <目录> --carry-from <旧轮目录名> 创建继任轮"
                           "(旧轮已冻结,证据保全)"}]
-    if event == "plan-validated":
-        return [{"kind": "draft", "target": "artifact",
-                 "notes": "以 agents/executor.md 起草 Artifact,经 commit.py artifact 提交"}]
-    if event == "artifact-validated":
-        return [{"kind": "command", "cwd": str(SKILL_ROOT),
-                 "argv": ["scripts/record_provenance.py", "--pm-root",
-                          str(pm)]}]
     if branch == "REVISE":
         return [{"kind": "draft", "target": "artifact",
                  "notes": "按 required_changes 修订 Artifact 后重新提交"}]
-    if branch == "BLOCKED" or event == "executor-blocked" or event == "need-input":
+    if branch == "BLOCKED" or event == "need-input":
         return [{"kind": "ask-user",
                  "items": ["缺什么 / 为什么重要 / 怎么获取"]}]
     if branch == "PASS":
@@ -157,8 +146,8 @@ def make_entry(event, src, dst, it, new_it, ref, param):
 
 
 def stop_at_limit(pm, state, rep, event, it, ref, param):
-    """+1 越上限:写 STOPPED 并拒绝该转移;恢复仅经 authorized-resume。"""
-    src = EVENT_SOURCE[event]
+    """+1 越上限:写 STOPPED 并拒绝该转移;恢复仅经 resume --raise-limit。"""
+    src = EVENT_SOURCE.get(event) or INTERNAL_SOURCE.get(event)
     state["status"] = "STOPPED"
     state.pop("resume_to", None)
     entry = make_entry(event, src, "STOPPED", it, it, ref,
@@ -172,7 +161,7 @@ def stop_at_limit(pm, state, rep, event, it, ref, param):
     rep.warn("iteration+1 超过 max_iterations,已写 STOPPED;"
              "须向用户报告当前最佳结论、critical_issues、evidence_gaps")
     rep.next.append({"kind": "stop",
-                     "reason": "达到迭代上限;恢复仅经 authorized-resume 且记录授权"})
+                     "reason": "达到迭代上限;恢复仅经 resume --raise-limit 且记录授权"})
     return rep.emit()
 
 
@@ -181,7 +170,7 @@ def main():
     rep = Reporter("transition")
     invalidate = "--invalidate-plan" in argv
     note = None
-    new_max = None
+    raise_limit = None
     event = None
     rest = []
     i = 0
@@ -196,8 +185,8 @@ def main():
         elif a == "--note" and i + 1 < len(argv):
             note = argv[i + 1]
             i += 2
-        elif a == "--max-iterations" and i + 1 < len(argv):
-            new_max = argv[i + 1]
+        elif a == "--raise-limit" and i + 1 < len(argv):
+            raise_limit = argv[i + 1]
             i += 2
         elif event is None and not a.startswith("--"):
             event = a
@@ -216,6 +205,12 @@ def main():
     elif invalidate:
         rep.command_error("transition", "--invalidate-plan 只用于 resume 事件")
         return rep.emit()
+    if invalidate and raise_limit is not None:
+        rep.command_error("transition", "--raise-limit 与 --invalidate-plan 互斥")
+        return rep.emit()
+    if event != "resume" and raise_limit is not None:
+        rep.command_error("transition", "--raise-limit 只用于 resume 事件")
+        return rep.emit()
     if event == "reopen":
         if not (isinstance(note, str) and note.strip()):
             rep.command_error("transition",
@@ -230,12 +225,16 @@ def main():
                               code="E_NOTE_REQUIRED")
             return rep.emit()
         param = {"note": note.strip()}
-    if event == "authorized-resume":
-        if new_max is None or not new_max.isdigit():
+    # resume --raise-limit(原 authorized-resume 并入):transitions 仍按
+    # v1 事件名 authorized-resume 记录,存量日志可读
+    log_event = event
+    if event == "resume" and raise_limit is not None:
+        if not (isinstance(raise_limit, str) and raise_limit.isdigit()):
             rep.command_error("transition",
-                              "authorized-resume 须以 --max-iterations 记录用户授权的新上限")
+                              "resume --raise-limit 须以正整数记录用户授权的新上限")
             return rep.emit()
-        param = int(new_max)
+        param = int(raise_limit)
+        log_event = "authorized-resume"
 
     command = f"transition {event}" + (" --invalidate-plan" if invalidate else "")
     rep.command = command
@@ -269,15 +268,15 @@ def main():
     if not isinstance(it, int):
         rep.error("state.json", "$.iteration", "iteration 缺失或非整数")
         return rep.emit()
-    if event == "resume" and not invalidate:
+    if event == "resume" and not invalidate and raise_limit is None:
         # 普通 resume 的身份参数 = 清除前的 resume_to;须在 classify 前取值
         param = state.get("resume_to")
-    if event == "authorized-resume":
+    if log_event == "authorized-resume":
         # 用户提额先于上限检查生效;新上限必须严格大于当前值
         cur_max = state.get("max_iterations", 5)
         if not isinstance(param, int) or param <= cur_max:
             rep.error("state.json", "$.max_iterations",
-                      f"authorized-resume 须提高上限:新值 {param} 须大于当前 {cur_max};"
+                      f"resume --raise-limit 须提高上限:新值 {param} 须大于当前 {cur_max};"
                       "授权记录须与实际提额一致")
             return rep.emit()
         state["max_iterations"] = param
@@ -287,26 +286,23 @@ def main():
     if event == "verdict":
         ver = latest_doc(pm, it, "verification")
         ref = canonical_sha256(ver) if ver is not None else None
-    elif event in ("plan-validated",):
-        plan = latest_doc(pm, it, "plan")
-        ref = canonical_sha256(plan) if plan is not None else None
-    elif event in ("artifact-validated", "executor-replan", "executor-blocked",
-                   "complete"):
+    elif event == "complete":
         art = latest_doc(pm, it, "artifact")
         ref = canonical_sha256(art) if art is not None else None
 
-    verdict_branch = classify(state, event, param, ref)
+    verdict_branch = classify(state, log_event, param, ref)
     if verdict_branch == "done":
         rep.warn("重跑判已执行,未重复转移")
-        rep.next.extend(derive_next(pm, state, event))
+        rep.next.extend(derive_next(pm, state, log_event))
         return rep.emit()
 
     status = state.get("status")
     if verdict_branch == "illegal":
         last = (state.get("transitions") or [])[-1:]
         rep.error("state.json", "$.status",
-                  f"非法转移:事件 {event} 要求 status="
-                  f"{EVENT_SOURCE[event]!r},当前为 {status!r};"
+                  f"非法转移:事件 {log_event} 要求 status="
+                  f"{(EVENT_SOURCE.get(log_event) or INTERNAL_SOURCE.get(log_event))!r},"
+                  f"当前为 {status!r};"
                   f"最近转移: {json.dumps(last, ensure_ascii=False) if last else '无'};"
                   f"全部合法事件: {sorted(EVENT_SOURCE)}")
         return rep.emit()
@@ -314,61 +310,24 @@ def main():
     branch_out = None
 
     # —— execute 分支:先守卫,后转移 ——
-    plus_one_events = {"start-planning", "executor-replan", "reopen",
-                       "authorized-resume"}
+    # reopen 与 authorized-resume(--raise-limit)是 +1;
     # resume --invalidate-plan 也是 +1;其余 resume 不加
-    plus_one = event in plus_one_events or (event == "resume" and invalidate)
+    plus_one = (log_event in ("reopen", "authorized-resume")
+                or (event == "resume" and invalidate))
 
     new_it = it + 1 if plus_one else it
     max_it = state.get("max_iterations", 5)
     if plus_one and new_it > max_it:
-        return stop_at_limit(pm, state, rep, event, it, ref,
-                             param if param is not None else event)
+        return stop_at_limit(pm, state, rep, log_event, it, ref,
+                             param if param is not None else log_event)
 
     dest = None
-    if event == "start-planning":
-        goal = (state.get("objective") or {}).get("goal")
-        if not (isinstance(goal, str) and goal.strip()):
-            rep.error("state.json", "$.objective.goal",
-                      "objective.goal 缺失,先补齐目标或走 need-input 问用户")
-            return rep.emit()
-        dest = "PLANNING"
-    elif event == "need-input":
+    if event == "need-input":
         if f"{it:02d}-plan.json" in (state.get("plans") or []):
             rep.error("state.json", "$.plans",
                       "本轮已登记 Plan,不写占位 Plan;继续现有 Plan 或 REPLAN")
             return rep.emit()
         dest = "WAITING_FOR_INPUT"
-    elif event == "plan-validated":
-        plan = latest_doc(pm, it, "plan")
-        if plan is None or f"{it:02d}-plan.json" not in (state.get("plans") or []):
-            rep.error("state.json", "$.plans", f"本轮 Plan 未登记,无法通过校验转移")
-            return rep.emit()
-        if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
-            rep.error("state.json", "$", "校验未通过,先修复再 plan-validated")
-            return rep.emit()
-        dest = "EXECUTING"
-    elif event in ("executor-replan", "executor-blocked"):
-        art = latest_doc(pm, it, "artifact")
-        need = "replan_required" if event == "executor-replan" else "blocked"
-        if art is None or art.get("status") != need:
-            rep.error("state.json", "$",
-                      f"{event} 要求最新 Artifact status={need!r}")
-            return rep.emit()
-        if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
-            rep.error("state.json", "$", "校验未通过(R2 等),先修复")
-            return rep.emit()
-        dest = "PLANNING" if event == "executor-replan" else "WAITING_FOR_INPUT"
-    elif event == "artifact-validated":
-        art = latest_doc(pm, it, "artifact")
-        if art is None or art.get("status") != "completed":
-            rep.error("state.json", "$",
-                      "artifact-validated 要求最新 Artifact status=completed")
-            return rep.emit()
-        if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
-            rep.error("state.json", "$", "A/B/C 校验未通过,不得派发质量评审")
-            return rep.emit()
-        dest = "VERIFYING"
     elif event == "verdict":
         ver = latest_doc(pm, it, "verification")
         if ver is None:
@@ -411,31 +370,30 @@ def main():
             return rep.emit()
         dest = "COMPLETE"
     elif event == "resume":
-        target = state.get("resume_to")
-        if target not in RESUME_STAGES:
-            rep.error("state.json", "$.resume_to",
-                      f"resume 要求合法 resume_to,当前为 {target!r}")
-            return rep.emit()
-        param = target if not invalidate else param
-        dest = "PLANNING" if invalidate else target
+        if log_event == "authorized-resume":
+            # 提额恢复(原 authorized-resume):STOPPED→PLANNING,+1 按新上限
+            dest = "PLANNING"
+        else:
+            target = state.get("resume_to")
+            if target not in RESUME_STAGES:
+                rep.error("state.json", "$.resume_to",
+                          f"resume 要求合法 resume_to,当前为 {target!r}")
+                return rep.emit()
+            param = target if not invalidate else param
+            dest = "PLANNING" if invalidate else target
     elif event == "reopen":
-        dest = "PLANNING"
-    elif event == "authorized-resume":
-        state["max_iterations"] = param
         dest = "PLANNING"
     elif event == "supersede":
         dest = "SUPERSEDED"  # 唯一不可逆终态:无任何恢复边,反悔=新轮+carry-from
 
     # —— 原子写:状态 + transitions 同一次落盘 ——
-    entry = make_entry(event, status, dest, it, new_it, ref, param)
+    entry = make_entry(log_event, status, dest, it, new_it, ref, param)
     state["status"] = dest
     if new_it != it:
         state["iteration"] = new_it
     if dest == "WAITING_FOR_INPUT":
         if event == "verdict":
             state["resume_to"] = "VERIFYING"
-        elif event == "executor-blocked":
-            state["resume_to"] = "EXECUTING"
         elif event == "need-input":
             state["resume_to"] = "PLANNING"
     else:
@@ -448,7 +406,7 @@ def main():
 
     if run_gate(["validate.py", "--pm-root", str(pm)]) != 0:
         rep.warn("转移已落盘但写后校验未通过;按 errors 恢复,必要时重跑守卫命令")
-    rep.next.extend(derive_next(pm, state, event, branch_out))
+    rep.next.extend(derive_next(pm, state, log_event, branch_out))
     return rep.emit()
 
 
