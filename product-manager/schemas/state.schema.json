@@ -6,7 +6,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["INIT", "PLANNING", "EXECUTING", "VERIFYING", "COMPLETE", "WAITING_FOR_INPUT", "STOPPED"]
+      "enum": ["INIT", "PLANNING", "EXECUTING", "VERIFYING", "COMPLETE", "WAITING_FOR_INPUT", "STOPPED", "SUPERSEDED"]
     },
     "resume_to": {
       "type": "string",
@@ -75,7 +75,7 @@
           "to_iteration": {"type": "integer", "minimum": 0},
           "at": {"type": "string"},
           "ref_sha256": {"type": ["string", "null"]},
-          "param": {}
+          "param": {"description": "事件参数:reopen/supersede 记对象 {\"note\": ...}(旧 reopen 字符串条目按原样读,不迁移);resume 变体沿用既有格式"}
         }
       }
     }

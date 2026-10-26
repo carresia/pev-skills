@@ -219,10 +219,19 @@ def main():
         rep.command_error("commit", f"草稿无法读取/解析: {draft_path}")
         return rep.emit()
 
+    # SUPERSEDED 不可逆终态:一切写入(含 state-update)冻结
+    if status == "SUPERSEDED":
+        rep.error("state.json", "$.status",
+                  "SUPERSEDED 是不可逆终态,本轮一切写入冻结;"
+                  "继任轮经 init.py --carry-from 创建",
+                  code="E_FROZEN_STATE")
+        return rep.emit()
+
     if sub == "state-update":
         if status in ("COMPLETE", "STOPPED"):
             rep.error("state.json", "$.status",
-                      f"{status} 为终点,语义字段冻结;继续工作须新建轮次或获授权恢复")
+                      f"{status} 为终点,语义字段冻结;继续工作须新建轮次或获授权恢复",
+                      code="E_FROZEN_STATE")
             return rep.emit()
         if not isinstance(draft, dict) or not draft:
             rep.error("$", "$", "补丁须为非空单层 JSON 对象")

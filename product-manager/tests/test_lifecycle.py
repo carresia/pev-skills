@@ -642,5 +642,113 @@ def proc_next_kind(payload):
     return payload["next"][0]["kind"]
 
 
+class TestSupersede(LifecycleBase):
+    """任务 2.4:supersede 事件与 SUPERSEDED 终态(design §4)。
+
+    Why:轮次此前没有废弃出口——悬挂 EXECUTING 轮只能靠改目标串骗过去重
+    (P0-2)。supersede 给出显式换轮语义:冻结旧轮、证据保全、iteration 不变;
+    继任关系由 init --carry-from 单向记录。
+    """
+
+    NOTE = "用户改为京东+淘宝且淘宝优先"
+
+    def forge_status(self, p, status):
+        pm = Path(p["pm_root"])
+        state = json.loads((pm / "state.json").read_text(encoding="utf-8"))
+        state["status"] = status
+        if status == "WAITING_FOR_INPUT":
+            state["resume_to"] = "PLANNING"
+        else:
+            state.pop("resume_to", None)
+        (pm / "state.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return p
+
+    def supersede(self, pm_root, note=None):
+        args = ["transition.py", "--pm-root", str(pm_root), "supersede"]
+        if note is not None:
+            args += ["--note", note]
+        return self.call(*args)
+
+    def codes(self, proc):
+        return [e.get("code") for e in h.out_json(proc)["errors"]]
+
+    def test_supersede_from_each_source_status(self):
+        # 任何状态(活轮与 COMPLETE/STOPPED 挂起轮)→ SUPERSEDED,iteration 不变
+        for status in ("INIT", "PLANNING", "EXECUTING", "VERIFYING",
+                       "WAITING_FOR_INPUT", "COMPLETE", "STOPPED"):
+            with self.subTest(status=status):
+                p = self.forge_status(self.init(), status)
+                proc = self.supersede(p["pm_root"], self.NOTE)
+                self.assertEqual(proc.returncode, 0, proc.stdout)
+                payload = h.out_json(proc)
+                self.assertEqual(payload["status"], "SUPERSEDED")
+                state = self.read_state(payload)
+                self.assertEqual(state["status"], "SUPERSEDED")
+                self.assertEqual(state["iteration"], 0)
+                last = state["transitions"][-1]
+                self.assertEqual(last["event"], "supersede")
+                self.assertEqual(last["to"], "SUPERSEDED")
+                self.assertIsInstance(last["param"], dict)
+                self.assertEqual(last["param"], {"note": self.NOTE})
+
+    def test_supersede_note_required(self):
+        p = self.init()
+        proc = self.supersede(p["pm_root"])
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("E_NOTE_REQUIRED", self.codes(proc))
+
+    def test_all_writes_frozen_after_superseded(self):
+        # R7:SUPERSEDED 上一切写入 E_FROZEN_STATE(state-update/产物提交/其他事件)
+        p = h.out_json(self.run_next(self.init()))  # PLANNING iter1
+        p = h.out_json(self.supersede(p["pm_root"], self.NOTE))
+        patch = self.draft("patch.json", {"known": ["补写"]})
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                         "state-update", str(patch))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("E_FROZEN_STATE", self.codes(proc))
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                         "plan", str(self.plan_draft()))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("E_FROZEN_STATE", self.codes(proc))
+        proc = self.call("transition.py", "--pm-root", p["pm_root"], "need-input")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("E_FROZEN_STATE", self.codes(proc))
+
+    def test_supersede_idempotent_rerun(self):
+        # 三分支:同 note 重跑 → done;不同 note → 非幂等重跑,冻结拒绝
+        p = h.out_json(self.run_next(self.init()))
+        p = h.out_json(self.supersede(p["pm_root"], self.NOTE))
+        n_trans = len(self.read_state(p)["transitions"])
+        again = self.supersede(p["pm_root"], self.NOTE)
+        self.assertEqual(again.returncode, 0, again.stdout)
+        payload = h.out_json(again)
+        self.assertEqual(payload["status"], "SUPERSEDED")
+        self.assertTrue(any("重跑" in w for w in payload["warnings"]),
+                        payload["warnings"])
+        self.assertEqual(len(self.read_state(payload)["transitions"]), n_trans)
+        other = self.supersede(p["pm_root"], "不同的废弃原因")
+        self.assertEqual(other.returncode, 1, other.stdout)
+        self.assertIn("E_FROZEN_STATE", self.codes(other))
+
+    def test_superseded_state_passes_validate(self):
+        # state.schema.json 枚举须含 SUPERSEDED(否则收口后 validate 全红)
+        p = h.out_json(self.run_next(self.init()))
+        p = h.out_json(self.supersede(p["pm_root"], self.NOTE))
+        proc = h.run_validate(Path(p["pm_root"]))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_init_same_goal_after_superseded_starts_new_round(self):
+        # R17:SUPERSEDED 不在活跃集,同目标 init 放行新轮
+        first = self.init(goal="目标甲")
+        p = h.out_json(self.run_next(first))
+        p = h.out_json(self.supersede(p["pm_root"], self.NOTE))
+        second = self.init(goal="目标甲")
+        self.assertNotEqual(second["pm_root"], first["pm_root"])
+        self.assertTrue(second["pm_root"].rstrip("/").endswith("-2/pm"),
+                        second["pm_root"])
+        self.assertEqual(self.read_state(second)["status"], "INIT")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -44,7 +44,8 @@ def active_round_with_same_goal(pev_dir, base, goal):
     """同日已有活跃轮次且 objective.goal 相同 → 幂等重建。
 
     活跃 = status ∈ {INIT, PLANNING, EXECUTING, VERIFYING, WAITING_FOR_INPUT};
-    COMPLETE/STOPPED 是终点,不算活跃(同目标重开须新建轮次)。
+    COMPLETE/STOPPED/SUPERSEDED 是终点,不算活跃(同目标重开须新建轮次;
+    SUPERSEDED 后的继任轮可经 --carry-from 携账本)。
     """
     active = {"INIT", "PLANNING", "EXECUTING", "VERIFYING", "WAITING_FOR_INPUT"}
     candidate = pev_dir / base

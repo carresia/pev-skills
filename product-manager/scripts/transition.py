@@ -6,9 +6,9 @@
 
 事件:start-planning | need-input | plan-validated | executor-replan |
 executor-blocked | artifact-validated | verdict | complete | resume |
-reopen | authorized-resume。旗标:resume 的 --invalidate-plan 变体;
-reopen 的 --note <prd_gaps 要点>(必填);authorized-resume 的
---max-iterations <新上限>(必填)。
+reopen | authorized-resume | supersede。旗标:resume 的 --invalidate-plan
+变体;reopen 的 --note <prd_gaps 要点>(必填);authorized-resume 的
+--max-iterations <新上限>(必填);supersede 的 --note <废弃原因>(必填)。
 
 再进入类事件的触发场景(区别在于轮次当前处于什么状态):
   resume            轮次未结束,停在 WAITING_FOR_INPUT 等用户拍板(开放问题/
@@ -18,6 +18,9 @@ reopen 的 --note <prd_gaps 要点>(必填);authorized-resume 的
                     prd_gaps;iteration+1 回 PLANNING 重规划,--note 必填。
   authorized-resume 轮次达到迭代上限被写 STOPPED;用户明确授权提高上限后
                     触发,--max-iterations 必填。
+  supersede         目标、范围、优先级或交付物形态变更,废弃现轮换新轮;
+                    任何状态→SUPERSEDED(不可逆终态,一切写入冻结),
+                    --note 必填;继任轮由 init.py --carry-from 创建。
   (另:init.py 的同目标幂等续用不是状态机事件——同日同 goal 且轮次活跃时
   init 不重建、直接续用;终态轮同 goal 则新建 -N 轮次,不走本表。)
 
@@ -50,8 +53,12 @@ EVENT_SOURCE = {
     "resume": "WAITING_FOR_INPUT",
     "reopen": "COMPLETE",
     "authorized-resume": "STOPPED",
+    "supersede": None,  # 任何状态可触发,见 ANY_SOURCE_EVENTS
 }
 RESUME_STAGES = ("PLANNING", "EXECUTING", "VERIFYING")
+# 无单一源状态的事件:supersede 从任何状态(含终态)触发;
+# 已处 SUPERSEDED 时的放行规则见 main 的终态冻结检查
+ANY_SOURCE_EVENTS = {"supersede"}
 
 
 def norm(value):
@@ -80,6 +87,8 @@ def classify(state, event, param, ref):
             return "done"
     if status == EVENT_SOURCE.get(event):
         return "execute"
+    if event in ANY_SOURCE_EVENTS and status != "SUPERSEDED":
+        return "execute"
     return "illegal"
 
 
@@ -104,6 +113,11 @@ def derive_next(pm, state, event, branch=None):
             or event == "executor-replan":
         return [{"kind": "draft", "target": "plan",
                  "notes": "以 agents/planner.md 起草 Plan,经 commit.py plan 提交"}]
+    if event == "supersede":
+        return [{"kind": "draft", "target": "objective",
+                 "notes": "换轮:起草新 objective 后以 init.py --objective <草稿> "
+                          "--workspace <目录> --carry-from <旧轮目录名> 创建继任轮"
+                          "(旧轮已冻结,证据保全)"}]
     if event == "plan-validated":
         return [{"kind": "draft", "target": "artifact",
                  "notes": "以 agents/executor.md 起草 Artifact,经 commit.py artifact 提交"}]
@@ -205,9 +219,17 @@ def main():
     if event == "reopen":
         if not (isinstance(note, str) and note.strip()):
             rep.command_error("transition",
-                              "reopen 须以 --note 记录 prd_gaps 来源与要点")
+                              "reopen 须以 --note 记录 prd_gaps 来源与要点",
+                              code="E_NOTE_REQUIRED")
             return rep.emit()
         param = note.strip()
+    if event == "supersede":
+        if not (isinstance(note, str) and note.strip()):
+            rep.command_error("transition",
+                              "supersede 须以 --note 记录废弃原因(用户原话或来源摘录)",
+                              code="E_NOTE_REQUIRED")
+            return rep.emit()
+        param = {"note": note.strip()}
     if event == "authorized-resume":
         if new_max is None or not new_max.isdigit():
             rep.command_error("transition",
@@ -228,6 +250,20 @@ def main():
                   f"非法事件 {event!r};当前 status={state.get('status')!r},"
                   f"合法事件: {sorted(EVENT_SOURCE)}")
         return rep.emit()
+    # SUPERSEDED 不可逆终态:除 supersede 自身的幂等重跑外,一切写入冻结
+    if state.get("status") == "SUPERSEDED":
+        if event != "supersede":
+            rep.error("state.json", "$.status",
+                      "SUPERSEDED 是不可逆终态,一切写入冻结;"
+                      "对废弃轮反悔=再开新轮并以 init.py --carry-from 携账本",
+                      code="E_FROZEN_STATE")
+            return rep.emit()
+        if classify(state, "supersede", param, None) != "done":
+            rep.error("state.json", "$.status",
+                      "已处 SUPERSEDED;仅同 --note 的 supersede 幂等重跑放行,"
+                      "不同 note 不构成新事件",
+                      code="E_FROZEN_STATE")
+            return rep.emit()
 
     it = rep.iteration
     if not isinstance(it, int):
@@ -387,6 +423,8 @@ def main():
     elif event == "authorized-resume":
         state["max_iterations"] = param
         dest = "PLANNING"
+    elif event == "supersede":
+        dest = "SUPERSEDED"  # 唯一不可逆终态:无任何恢复边,反悔=新轮+carry-from
 
     # —— 原子写:状态 + transitions 同一次落盘 ——
     entry = make_entry(event, status, dest, it, new_it, ref, param)
