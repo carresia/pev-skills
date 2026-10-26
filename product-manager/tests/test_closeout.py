@@ -7,6 +7,7 @@
 运行(skill 根目录): python3 -m unittest discover -s tests -t . -v
 """
 
+import json
 import unittest
 
 from tests import helpers as h
@@ -332,6 +333,48 @@ class TestReportTier(CloseoutTestCase):
         self.assertTrue(hits, payload["errors"])
         self.assertTrue(all(e.get("code") == "P1_PROVENANCE_MISMATCH" for e in hits),
                         payload["errors"])
+
+
+class TestProjectionExclusion(CloseoutTestCase):
+    """任务 2.2:carried_from 归入投影排除集(design §4.1)。
+
+    Why:换轮携账本时 init --carry-from 要在新轮 state 写 carried_from;
+    它是生命周期数据,写入不得改变 state_projection_sha256,否则继任轮
+    一建轮就会把携带进来的绑定语义打漂。
+    """
+
+    def test_carried_from_declared_optional_in_schema(self):
+        schema = json.loads((h.SKILL_ROOT / "schemas" / "state.schema.json")
+                            .read_text(encoding="utf-8"))
+        prop = schema["properties"].get("carried_from")
+        self.assertIsNotNone(prop, "state.schema.json 必须声明可选顶层 carried_from")
+        self.assertNotIn("carried_from", schema.get("required", []))
+        self.assertEqual(prop.get("type"), "string")
+
+    def test_carried_from_write_keeps_projection_and_bound_pass(self):
+        # 反向:写入排除集字段不改变投影摘要,绑定 PASS 仍有效
+        self.build_chain(status="VERIFYING", bind=True)
+        without = h.canonical_sha256(h.state_projection(self.pm.state))
+        self.pm.state["carried_from"] = "prd-2026-10-23"
+        self.pm.flush_state()
+        with_field = h.canonical_sha256(h.state_projection(self.pm.state))
+        self.assertEqual(without, with_field)
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_semantic_change_still_changes_projection(self):
+        # 正向对照:语义字段(objective/evidence)改动必须改变投影摘要
+        base = h.min_state(status="VERIFYING", iteration=1,
+                           evidence=[h.min_evidence(1)])
+        d0 = h.canonical_sha256(h.state_projection(base))
+        obj = json.loads(json.dumps(base))
+        obj["objective"]["goal"] = "改写后的目标"
+        d1 = h.canonical_sha256(h.state_projection(obj))
+        ev = json.loads(json.dumps(base))
+        ev["evidence"].append(h.min_evidence(2))
+        d2 = h.canonical_sha256(h.state_projection(ev))
+        self.assertNotEqual(d0, d1)
+        self.assertNotEqual(d0, d2)
 
 
 if __name__ == "__main__":

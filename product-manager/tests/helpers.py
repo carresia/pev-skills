@@ -13,7 +13,7 @@ from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
-# design.md"输入绑定与来源证明":state 投影的显式纳入/排除路径(七条生命周期路径排除)
+# design.md"输入绑定与来源证明":state 投影的显式纳入/排除路径(八条生命周期路径排除)
 PROJECTION_INCLUDE = (
     "objective", "business_context", "known", "assumptions",
     "evidence", "metrics", "hypotheses", "opportunities",

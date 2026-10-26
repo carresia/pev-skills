@@ -55,6 +55,10 @@
     "opportunities": {"type": "array"},
     "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R4 对账)"},
     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R4 对账)"},
+    "carried_from": {
+      "type": "string",
+      "description": "继任轮单向记录的旧轮目录名(init --carry-from 写入,旧轮不回记);生命周期数据,不进入 state 投影"
+    },
     "iteration": {"type": "integer", "minimum": 0},
     "max_iterations": {"type": "integer", "minimum": 1, "default": 5},
     "transitions": {
