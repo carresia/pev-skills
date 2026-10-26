@@ -21,8 +21,10 @@ minimum/maximum/pattern)外,强制以下语义规则——这些是状态机的�
     R4  state.plans / state.artifacts 登记册与 iterations/ 目录双向一致
     R5  verification.verdict=PASS 时 required_changes 必须为空,
         verdict=REVISE 时必须非空
-    P1  verification.provenance 复算:按当前文件重算三摘要并与 provenance 比对,
-        不一致时报冲突路径与恢复动作(已验证内容被改即失去交付资格)
+    P1  verification.provenance 复算(分级,design §2.2):当轮权威(N==iteration)
+        复算三摘要,不一致即 P1(P1_PROVENANCE_MISMATCH);历史报告(N<iteration)
+        只复算 artifact/plan(历史文件不可变),state 投影不复算——投影没有历史
+        快照,按当前投影复算历史报告会把合法演进误报为错误
     P2  COMPLETE 收口门:当前轮必须有 verification 且 verdict=PASS;
         完全没有验证记录却标 COMPLETE 是错误
     P3  未绑定中间态:当轮报告无 provenance 属合法中间态,结构通过,
@@ -176,41 +178,68 @@ def ver_nn(name):
     return int(m.group(1)) if m else None
 
 
+def report_tier(state, ver_name):
+    """报告权威分级(design §2.2):N==iteration → authority,N<iteration → history。
+
+    N>iteration 或取不到轮次/迭代 → None:P1 不分级,归登记册对账既有口径。
+    绑定与生命周期状态无关档位判定——authority 覆盖 VERIFYING(已绑定待收口)
+    与 COMPLETE(已收口)两个阶段的当轮报告。
+    """
+    nn = ver_nn(ver_name)
+    iteration = state.get("iteration") if isinstance(state, dict) else None
+    if nn is None or not isinstance(iteration, int):
+        return None
+    if nn > iteration:
+        return None
+    return "authority" if nn == iteration else "history"
+
+
 def recompute_provenance(rep, state, pm_dir, ver_name, ver):
-    """P1:按当前文件重算三摘要,与 provenance 比对;不一致报冲突路径与恢复动作。"""
+    """P1(分级):当轮权威三摘要复算;历史报告只复算 artifact/plan,投影不复算。"""
     prov = ver.get("provenance")
     if not isinstance(prov, dict):
         return
     if prov.get("algorithm") != "sha256-v1":
         rep.error(ver_name, "$.provenance.algorithm",
-                  "P1: provenance.algorithm 不是 sha256-v1,无法复算")
+                  "P1: provenance.algorithm 不是 sha256-v1,无法复算",
+                  code="P1_MISSING_INPUT")
         return
     nn = ver_nn(ver_name)
     if nn is None:
         return
-    hint = ("P1: provenance 复算不一致,已验证内容在检查后被改动,失去交付资格;"
-            "恢复:按修订规则新建轮次重新验证,不得沿用旧 PASS")
+    if report_tier(state, ver_name) == "authority":
+        hint = ("P1: 当轮权威报告 provenance 复算不一致,已验证内容被改动,失去交付资格;"
+                "恢复:恢复原内容使复算一致,否则按四条判据换轮重新验证,不得沿用旧 PASS")
+    else:
+        hint = "P1: 历史报告 provenance 复算不一致,历史文件应不可变(不符即绕过脚本直接改写)"
 
     art_name = f"{nn:02d}-artifact.json"
     art_path = pm_dir / "iterations" / art_name
     art = read_json(art_path) if art_path.is_file() else None
     if art is None:
         rep.error(f"iterations/{art_name}", "$",
-                  "P1: provenance 指向的当轮 Artifact 缺失或不可解析")
+                  "P1: provenance 指向的当轮 Artifact 缺失或不可解析",
+                  code="P1_MISSING_INPUT")
     elif canonical_sha256(art) != prov.get("artifact_sha256"):
-        rep.error(f"iterations/{art_name}", "$", hint)
+        rep.error(f"iterations/{art_name}", "$", hint,
+                  code="P1_PROVENANCE_MISMATCH")
 
     plan_rel = prov.get("plan_path")
     plan_path = pm_dir / plan_rel if isinstance(plan_rel, str) else None
     plan = read_json(plan_path) if plan_path and plan_path.is_file() else None
     if plan is None:
         rep.error(plan_rel or "$.provenance.plan_path", "$",
-                  "P1: provenance 指向的有效 Plan 缺失或不可解析")
+                  "P1: provenance 指向的有效 Plan 缺失或不可解析",
+                  code="P1_MISSING_INPUT")
     elif canonical_sha256(plan) != prov.get("plan_sha256"):
-        rep.error(plan_rel, "$", hint)
+        rep.error(plan_rel, "$", hint, code="P1_PROVENANCE_MISMATCH")
 
-    if canonical_sha256(state_projection(state or {})) != prov.get("state_projection_sha256"):
-        rep.error("state.json", "$", hint + "(state 语义字段)")
+    # state 投影只对当轮权威复算:投影没有历史快照,按当前投影复算历史报告
+    # 必然把合法演进误报为错误(design §2.2,即 P0-1 机理)
+    if report_tier(state, ver_name) == "authority" and canonical_sha256(
+            state_projection(state or {})) != prov.get("state_projection_sha256"):
+        rep.error("state.json", "$", hint + "(state 语义字段)",
+                  code="P1_PROVENANCE_MISMATCH")
 
 
 def binding_gates(rep, state, verifications, iteration):

@@ -55,9 +55,11 @@ class Reporter:
         self.warnings = []
         self.next = []
 
-    def error(self, file, json_path, reason):
-        self.errors.append(
-            {"file": file, "json_path": json_path, "reason": trunc(reason)})
+    def error(self, file, json_path, reason, code=None):
+        entry = {"file": file, "json_path": json_path, "reason": trunc(reason)}
+        if code:
+            entry["code"] = code
+        self.errors.append(entry)
 
     def command_error(self, command_name, reason):
         """命令级错误:file 固定为命令名,json_path 为 null。"""

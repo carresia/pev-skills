@@ -227,6 +227,113 @@ class TestOriginalGapContract(CloseoutTestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
+class TestReportTier(CloseoutTestCase):
+    """任务 2.1:交付权威分级(P1 拆分,design §2.2)。
+
+    Why:历史报告存的投影摘要对应验证当时,而投影没有历史快照;同轮任何一次合法
+    语义追加(补证据)都会被"按当前投影复算"染成 P1,整轮永久无法收口(P0-1)。
+    分级后:当轮权威(N==iteration)三摘要全复算;历史(N<iteration)只复算
+    artifact/plan,投影不复算;N>iteration 属登记册对账口径,P1 不分级。
+    """
+
+    @staticmethod
+    def tier(state, ver_name):
+        import sys as _sys
+        scripts = str(h.SKILL_ROOT / "scripts")
+        if scripts not in _sys.path:
+            _sys.path.insert(0, scripts)
+        import validate as v
+        return v.report_tier(state, ver_name)
+
+    def test_report_tier_matrix(self):
+        st = h.min_state(status="VERIFYING", iteration=4)
+        self.assertEqual(self.tier(st, "iterations/04-verification.json"), "authority")
+        self.assertEqual(self.tier(st, "iterations/03-verification.json"), "history")
+        self.assertIsNone(self.tier(st, "iterations/05-verification.json"))
+        self.assertIsNone(self.tier(st, "iterations/xx-verification.json"))
+        self.assertIsNone(self.tier(h.min_state(status="VERIFYING", iteration=None),
+                                    "iterations/01-verification.json"))
+
+    def build_two_round_chain(self):
+        """轮 1 完整链(绑定)+ 抬到轮 2(复用轮 1 Plan)前的现场。"""
+        state1 = h.min_state(status="VERIFYING", iteration=1,
+                             evidence=[h.min_evidence(1)])
+        self.pm.state = state1
+        plan1 = h.min_plan()
+        art1 = h.min_artifact()
+        self.pm.write_doc(1, "plan", plan1)
+        self.pm.write_doc(1, "artifact", art1)
+        ver1 = h.min_verification()
+        ver1["provenance"] = h.min_provenance(self.pm, iteration=1, plan=plan1,
+                                              artifact=art1, state=state1)
+        self.pm.write_doc(1, "verification", ver1)
+        return plan1, art1, ver1
+
+    def test_history_report_projection_drift_not_flagged(self):
+        # P0-1 核心解除:reopen/REVISE 后同轮追加证据,历史绑定报告不得再报 P1
+        self.build_two_round_chain()
+        # 原地演进(等价 reopen 后补证据):iteration 抬到 2、evidence 追加,登记册不动
+        self.pm.state["iteration"] = 2
+        self.pm.state["evidence"] = [h.min_evidence(1), h.min_evidence(2)]
+        self.pm.flush_state()
+        self.pm.write_doc(2, "artifact", h.min_artifact())
+        self.pm.write_doc(2, "verification", h.min_verification())
+        proc = h.run_validate(self.pm.root)
+        payload = h.out_json(proc)
+        self.assertEqual(proc.returncode, 0, payload)
+        self.assertFalse(
+            any(e.get("file") == "state.json" and "P1" in str(e.get("reason", ""))
+                for e in payload["errors"]),
+            payload["errors"])
+
+    def test_history_artifact_tamper_still_p1_with_code(self):
+        # 历史文件不可变的接棒防线:轮 1 artifact 被直接改写仍必须 P1,且带 code
+        self.build_two_round_chain()
+        art1 = h.min_artifact()
+        art1["artifact"]["title"] = "历史轮被直接改写"
+        self.pm.write_doc(1, "artifact", art1)
+        self.pm.state["iteration"] = 2
+        self.pm.flush_state()
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        hits = [e for e in payload["errors"]
+                if "01-artifact" in str(e.get("file", ""))
+                and "P1" in str(e.get("reason", ""))]
+        self.assertTrue(hits, payload["errors"])
+        self.assertTrue(all(e.get("code") == "P1_PROVENANCE_MISMATCH" for e in hits),
+                        payload["errors"])
+
+    def test_authority_projection_mismatch_carries_code(self):
+        # R10:当轮权威投影不符 → P1 错误必须携带 code(供脚本化消费)
+        self.build_chain(status="VERIFYING", bind=True)
+        self.pm.state["known"] = self.pm.state.get("known", []) + ["绑定后追加"]
+        self.pm.flush_state()
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        hits = [e for e in payload["errors"]
+                if e.get("file") == "state.json" and "P1" in str(e.get("reason", ""))]
+        self.assertTrue(hits, payload["errors"])
+        self.assertTrue(all(e.get("code") == "P1_PROVENANCE_MISMATCH" for e in hits),
+                        payload["errors"])
+
+    def test_complete_closeout_pass_drift_still_p1(self):
+        # 验收行:prd-2026-10-21/pm 形态(COMPLETE 收口 PASS 漂移)在合成夹具上仍 P1
+        plan, artifact, ver = self.build_chain(status="COMPLETE", bind=True)
+        artifact["artifact"]["title"] = "收口后被改写"
+        self.pm.write_doc(1, "artifact", artifact)
+        proc = h.run_validate(self.pm.root)
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        hits = [e for e in payload["errors"]
+                if "01-artifact" in str(e.get("file", ""))
+                and "P1" in str(e.get("reason", ""))]
+        self.assertTrue(hits, payload["errors"])
+        self.assertTrue(all(e.get("code") == "P1_PROVENANCE_MISMATCH" for e in hits),
+                        payload["errors"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
