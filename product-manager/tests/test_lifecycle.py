@@ -1122,5 +1122,157 @@ class TestCloseoutFold(LifecycleBase):
         self.assertEqual(h.out_json(proc)["status"], "VERIFYING")
 
 
+class TestReopenPath(LifecycleBase):
+    """任务 2.6:同轮 reopen 死路解除(design §1.3,R6/R8/R9/R15)。
+
+    Why:重放轮 2 证明 v1 的同轮 reopen 在需要补证据时是死路——历史绑定
+    报告按当前投影复算全部染红 P1,整轮永久无法再 COMPLETE(P0-1)。
+    分级(2.1)+ 收口折叠(2.10)落地后,本类固化完整剧本与守卫反例。
+    """
+
+    def complete_round_one(self):
+        p = self.init()
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "state-update", str(self.draft("patch-e1.json", {
+                                    "evidence": [h.min_evidence(1)],
+                                }))))
+        p = self.reach_verifying(p)
+        return self.bind_pass(p)  # → COMPLETE iter1,01 报告绑定
+
+    def test_reopen_full_script_replay(self):
+        # R8:design §1.3 剧本——打回→补证据→新迭代全链→再交付,历史报告不报错
+        p = self.complete_round_one()
+        self.assertEqual(p["status"], "COMPLETE")
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "reopen", "--note", "用户打回:范围界定需补充"))
+        self.assertEqual(p["status"], "PLANNING")
+        self.assertEqual(p["iteration"], 2)
+        last = self.read_state(p)["transitions"][-1]
+        self.assertEqual(last["param"], {"note": "用户打回:范围界定需补充"})
+        # 新迭代:plan→artifact→快照→PASS 收口,全程无手工改文件
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "state-update", str(self.draft("patch.json", {
+                                    "evidence": [h.min_evidence(2), h.min_evidence(3)],
+                                }))))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"]))
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.report_draft(p, "PASS"))))
+        self.assertEqual(p["status"], "COMPLETE", "同轮再交付收口")
+        self.assertEqual(p["iteration"], 2)
+        state = self.read_state(p)
+        ids = [e["id"] for e in state["evidence"]]
+        self.assertEqual(ids, ["E1", "E2", "E3"], "账本同轮连续")
+        # 历史报告 01 降级后不报错:validate 结构通过
+        proc = h.run_validate(Path(p["pm_root"]))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_reopen_budget_exhausted_rejected_before_write(self):
+        # R15 反例:预算尽(5/5 COMPLETE)reopen 在写任何状态前被拒,保持 COMPLETE
+        p = self.init()  # PLANNING iter1
+        for _ in range(4):
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "need-input"))
+            p = h.out_json(self.call("transition.py", "--pm-root",
+                                    p["pm_root"], "resume",
+                                    "--invalidate-plan"))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"]))
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.report_draft(p, "PASS"))))
+        self.assertEqual(p["status"], "COMPLETE")
+        self.assertEqual(p["iteration"], 5)
+        before = (Path(p["pm_root"]) / "state.json").read_bytes()
+        proc = self.call("transition.py", "--pm-root", p["pm_root"],
+                        "reopen", "--note", "5/5 后再改")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any(e.get("code") == "E_BUDGET_EXHAUSTED"
+                            for e in payload["errors"]), payload["errors"])
+        self.assertEqual(payload["status"], "COMPLETE", "状态保持 COMPLETE")
+        self.assertEqual((Path(p["pm_root"]) / "state.json").read_bytes(),
+                         before, "不得写任何状态(含 STOPPED)")
+
+    def test_old_pass_not_consumable_after_reopen(self):
+        # R6:iteration 前移后,旧轮号 PASS 不能触发收口/转移/覆盖
+        p = self.complete_round_one()
+        p = h.out_json(self.call("transition.py", "--pm-root", p["pm_root"],
+                                "reopen", "--note", "打回"))
+        self.assertEqual(p["status"], "PLANNING")
+        # 反例①:旧 PASS 报告命令在 PLANNING 上被阶段不匹配拒绝
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "verification", str(self.ws / "report-pass.json"))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        # 走到新迭代 VERIFYING 后,旧报告复述(01 快照)与 02 快照不符,仍不可收口
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "plan", str(self.plan_draft())))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"]))
+        proc = self.call("commit.py", "--pm-root", p["pm_root"],
+                        "verification", str(self.ws / "report-pass.json"))
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertFalse(h.out_json(proc)["ok"])
+        self.assertEqual(h.out_json(proc)["status"], "VERIFYING")
+
+    def test_revise_midway_evidence_append(self):
+        # R9:REVISE 中途追加证据——历史降级、当轮权威,同轮可收口
+        p = self.init()
+        p = self.reach_verifying(p)
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.report_draft(p, "REVISE"))))
+        self.assertEqual(p["status"], "EXECUTING")
+        self.assertEqual(p["iteration"], 2)
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "state-update", str(self.draft("patch.json", {
+                                    "evidence": [h.min_evidence(2)],
+                                }))))
+        p = h.out_json(self.call("commit.py", "--pm-root", p["pm_root"],
+                                "artifact", str(self.artifact_draft())))
+        p = h.out_json(self.call("record_provenance.py", "--pm-root",
+                                p["pm_root"]))
+        p = h.out_json(self.call(
+            "commit.py", "--pm-root", p["pm_root"],
+            "verification", str(self.report_draft(p, "PASS"))))
+        self.assertEqual(p["status"], "COMPLETE")
+        proc = h.run_validate(Path(p["pm_root"]))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_reopen_legacy_string_param_compatible_read(self):
+        # 旧 reopen 字符串 param 条目按原样读:同 note 重跑仍判已执行
+        p = self.complete_round_one()
+        pm = Path(p["pm_root"])
+        state = self.read_state(p)
+        state["status"] = "PLANNING"
+        state["iteration"] = 2
+        state.setdefault("transitions", []).append({
+            "event": "reopen", "from": "COMPLETE", "to": "PLANNING",
+            "from_iteration": 1, "to_iteration": 2,
+            "at": "2026-10-23T12:09:01Z", "ref_sha256": None,
+            "param": "旧格式的打回要点",   # v1 字符串条目,不迁移
+        })
+        (pm / "state.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        proc = self.call("transition.py", "--pm-root", str(pm),
+                        "reopen", "--note", "旧格式的打回要点")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        payload = h.out_json(proc)
+        self.assertTrue(any("重跑" in w for w in payload["warnings"]),
+                        payload["warnings"])
+
+
 if __name__ == "__main__":
     unittest.main()

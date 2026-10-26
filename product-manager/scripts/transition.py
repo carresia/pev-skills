@@ -70,8 +70,11 @@ def classify(state, event, param, ref):
     iteration = state.get("iteration")
 
     def ident(t):
+        tp = t.get("param")
+        if event == "reopen" and isinstance(tp, str):
+            tp = {"note": tp}  # 旧字符串条目兼容读(design §1.1,不迁移)
         return (t.get("event") == event
-                and norm(t.get("param")) == norm(param)
+                and norm(tp) == norm(param)
                 and norm(t.get("ref_sha256")) == norm(ref))
 
     if transitions:
@@ -211,7 +214,7 @@ def main():
                               "reopen 须以 --note 记录 prd_gaps 来源与要点",
                               code="E_NOTE_REQUIRED")
             return rep.emit()
-        param = note.strip()
+        param = {"note": note.strip()}  # 对象格式;旧字符串条目按原样读
     if event == "supersede":
         if not (isinstance(note, str) and note.strip()):
             rep.command_error("transition",
@@ -296,6 +299,15 @@ def main():
         return rep.emit()
 
     # —— execute 分支:先守卫,后转移 ——
+    # reopen 预算守卫:预算尽在写任何状态前拒绝(不写 STOPPED;
+    # 5/5 COMPLETE 后的再次修改唯一路径=换轮,design §1.2 规则 2/§12)
+    if event == "reopen" and it + 1 > state.get("max_iterations", 5):
+        rep.error("state.json", "$.iteration",
+                  f"reopen 的 iteration+1={it + 1} 越过 "
+                  f"max_iterations={state.get('max_iterations', 5)},预算已尽;"
+                  "再次修改唯一路径:supersede + init --carry-from 换轮",
+                  code="E_BUDGET_EXHAUSTED")
+        return rep.emit()
     # reopen 与 authorized-resume(--raise-limit)是 +1;
     # resume --invalidate-plan 也是 +1;其余 resume 不加
     plus_one = (log_event in ("reopen", "authorized-resume")
