@@ -33,7 +33,7 @@ metadata:
 
 ## 核心不变量
 
-1. **Planner 不写代码**,只产出执行规划(基线勘察 + 分母转录 + 批次划分)。
+1. **Planner 不写代码**,只产出执行规划(基线勘察 + 任务现状取证 + 分母转录 + 批次划分)。
 2. **Executor 不改清单、不越范围**:每条记录溯源 registry 任务;实际改动 ⊆ 声明
    files_touched ∪ 有理由的 deviations;清单本身的错浮出三选一,不在代码里圆谎。
 3. **Verifier 不直接修改结果与代码**,只输出 verdict + scores + required_changes;
@@ -78,7 +78,7 @@ WAITING_FOR_UPSTREAM(记 upstream_gaps);上游更新 → PLANNING(只重排受�
 
 严格按序:0 恢复(不覆盖已有产物)→ 1 INIT(登记 plan_source(门槛上游:任务清单
 路径)/aux_sources/vcs/mode)→
-2 PLANNING(`agents/planner.md` + `playbooks/implement.md`,**基线全绿是硬条件**)→
+2 PLANNING(`agents/planner.md` + `playbooks/implement.md`,**基线全绿是硬条件**;执行前按任务只读取证,结果写入 `impl/explore/`,见 `guides/pre-implementation-explore.md`)→
 3 EXECUTING(`agents/executor.md`:逐任务先红后绿 + 精修循环)→ 4 VERIFYING
 (`agents/verifier.md`,独立评审 + 抽查重跑)→ 5 按状态机分支。逐阶段表与 Verifier
 独立性见 [references/pev-protocol.md](references/pev-protocol.md)。

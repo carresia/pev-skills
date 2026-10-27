@@ -18,7 +18,9 @@
 ## Plan 骨架
 
 1. `survey_context` — 勘察仓库现状与**基线**(分支/commit/测试与构建是否全绿);
-   基线 fail → 浮出,不进入下一步。定高风险任务的前置顺序。
+   基线 fail → 浮出,不进入下一步。基线通过后按 `guides/pre-implementation-explore.md`
+   只读取证当前批次任务,报告存 `impl/explore/`,FACT 并入 Evidence Ledger;影响任务的
+   conflict/unresolved 必须阻塞该任务。定高风险任务的前置顺序。
 2. `build_task_registry` — 从上游结构化产物(或用户清单)逐条转录任务分母
    (id/标题/声明文件/验收标准/依赖/trace)。小工程可并入第 1 步。
 3. `define_batches` — 按依赖与 PHASE 边界定执行批次、每批恢复点(批次末系统可工作)

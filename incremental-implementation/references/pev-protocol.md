@@ -71,7 +71,7 @@ deviations。
 |---|---|---|---|
 | 0 恢复 | `.pev/` 下最新含 `impl/state.json` 轮次的该文件(若存在) | 状态汇报 | **不重新 INIT、不覆盖已有产物**;中断恢复先走 `playbooks/audit.md` 对账;重开按上文归档规则 |
 | 1 INIT | 上游清单路径 | `state.json`:`status="INIT"`、`iteration=0`、`max_iterations=5`、`plan_source`、`aux_sources`(同轮自动登记)、`vcs`(git/none)、`mode`(implement/audit,默认 implement) | 范围与优先级能从清单推断则记入 `assumptions`,不能则一次性问齐,不逐条追问;audit 模式见 `playbooks/audit.md` |
-| 2 PLANNING | `agents/planner.md`、`playbooks/implement.md` | `iterations/<N>-plan.json` | 基线全绿是进入下一步的硬条件;校验通过 → `state.plans` 登记,`status="EXECUTING"` |
+| 2 PLANNING | `agents/planner.md`、`playbooks/implement.md`、`guides/pre-implementation-explore.md` | `iterations/<N>-plan.json`、`explore/<批次或任务 ID>.md` | 基线全绿且当前批次实施前现状取证已保存;影响任务的缺口阻塞该任务;校验通过 → `state.plans` 登记,`status="EXECUTING"` |
 | 3 EXECUTING | `agents/executor.md` | `iterations/<N>-artifact.json` | 逐任务协议(先红后绿/真跑验证/原子提交/如实记录);清单缺口 → `status="blocked"` 走三选一;全批次完成 → `status="completed"` |
 | 4 VERIFYING | `agents/verifier.md` | `iterations/<N>-verification.json` | 独立性机制见下;抽查重跑验证命令是本 skill 的特色动作 |
 | 5 分支 | verdict | 见状态机 | PASS → 按 `templates/implementation-report.md` 渲染到 `output/implementation-report.md` 呈最终预览,同时呈交 verification 的 `warnings`、失败/延后任务与偏离声明残留,并说明**单轮评审通过不等于零残留**;用户确认后 `status="COMPLETE"` |
