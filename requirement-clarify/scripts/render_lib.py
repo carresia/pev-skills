@@ -17,7 +17,11 @@ SPEC_TEMPLATE = {
                         "tracking_acceptance", "always", "ask_first", "never"),
     "required_loops": ("rules", "permissions", "exceptions", "nfrs",
                        "data_metrics", "acceptance"),
-    "optional_loops": ("open_questions",),  # 问题全部闭环后允许为空,渲染为零行
+    "optional_loops": ("open_questions",  # 问题全部闭环后允许为空,渲染为零行
+                       # 2026-10-27(T1-15):三段决策内容,允许为空——缺依据时
+                       # 不得为填段虚构决策,由下游技能指出缺口
+                       "implementation_decisions", "test_decisions",
+                       "out_of_scope"),
     "item_required": {
         "rules": ("rule", "source"),
         "permissions": ("rule", "source"),
@@ -27,6 +31,9 @@ SPEC_TEMPLATE = {
                          "work_item"),
         "acceptance": ("criteria",),
         "open_questions": ("question", "owner"),
+        "implementation_decisions": ("decision", "source"),
+        "test_decisions": ("behavior", "verification"),
+        "out_of_scope": ("item", "reason"),
     },
     "state_scalars": ("prd_source",),  # 取自 state 而非 artifact 正文的标量
 }

@@ -49,13 +49,25 @@
 {{/each}}
 - 埋点交付验收: {{tracking_acceptance}}(§8 表中"需新增"各项全部落地)
 
-## 10. Boundaries
+## 10. Implementation Decisions(模块/接口/契约级;不含待改文件路径)
+
+{{#each implementation_decisions}}- {{decision}}(来源: {{source}})
+{{/each}}
+## 11. Test Decisions(只针对用户可观察的外部行为)
+
+{{#each test_decisions}}- {{behavior}} → 验证: {{verification}}
+{{/each}}
+## 12. Out of Scope(本变更明确不处理)
+
+{{#each out_of_scope}}- {{item}}(原因: {{reason}})
+{{/each}}
+## 13. Boundaries
 
 - Always: {{always}}
 - Ask first: {{ask_first}}
 - Never: {{never}}
 
-## 11. Open Questions(随 Spec 移交下游,开发前必须闭环)
+## 14. Open Questions(随 Spec 移交下游,开发前必须闭环)
 
 {{#each open_questions}}- [ ] {{question}}(owner: {{owner}})
 {{/each}}
