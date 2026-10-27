@@ -1,7 +1,8 @@
 ---
 name: behavior-decompose
 description: |
-  当上游已有工程 Spec(requirement-clarify 产出,通常 .pev/<轮次>/rc/output/spec.md)
+  当上游已有工程 Spec(requirement-clarify 产出:OpenSpec 工作流变更用变更目录交付副本
+  openspec/changes/<name>/spec.md(同轮 rc 须已 COMPLETE),独立流程用 .pev/<轮次>/rc/output/spec.md)
   或用户直接提供已批准 PRD,且需要拆解为行为目录(Epic → Feature → Story → 验收标准
   → 11 类场景,带需求溯源与覆盖门禁)时使用;需要跨会话可恢复的 PEV 流程时选本
   skill 而非单轮线性的旧版 decompose。不用于:从零澄清需求(spec-driven-development)、

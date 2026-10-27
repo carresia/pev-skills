@@ -45,9 +45,13 @@ EXECUTING 阶段的推理不在文件里,就当作不存在。
     └── output/                   # PASS 后按 templates/ 渲染的最终交付物
 ```
 
-上游**引用不复制**:`state.spec_source` 只记录路径(优先 `.pev/<轮次>/rc/output/spec.md`,
-用户直接给的 PRD 亦可)。同轮 `rc/` 下的中间产物(Evidence Ledger、澄清记录)是合法溯源源,
-按需读取,不拷入 `decompose/`。
+上游**引用不复制**:`state.spec_source` 只记录路径。OpenSpec 工作流变更优先用
+变更目录的交付副本(`<workspace>/openspec/changes/<name>/spec.md`,由澄清轮 PASS
+收口交付,开始拆解前先确认同轮 `rc/` 已 COMPLETE);独立流程用
+`.pev/<轮次>/rc/output/spec.md`;用户直接给的 PRD 亦可。同轮 `rc/` 下的中间产物
+(Evidence Ledger、澄清记录)是合法溯源源,按需读取,不拷入 `decompose/`。
+指向的文件缺失或(交付副本场景)未经 PASS 批准时,`validate.py` R10 明确拒绝——
+停止并等待上游,不得改用其他轮次的 Spec。
 
 文件名中的 `<N>` 是迭代号。REVISE 轮复用原 Plan,因此只有 `<N>-artifact.json` /
 `<N>-verification.json` 而没有 `<N>-plan.json`——**这是正常的,不是缺文件**。

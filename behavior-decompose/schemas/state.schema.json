@@ -15,7 +15,7 @@
     },
     "spec_source": {
       "type": "string",
-      "description": "上游文件路径(优先 .pev/<轮次>/rc/output/spec.md,或用户直接提供的已批准 PRD);引用不复制,溯源与打回都以它为准"
+      "description": "上游文件路径(OpenSpec 工作流变更用变更目录交付副本 openspec/changes/<name>/spec.md(同轮 rc 须已 COMPLETE);独立流程用 .pev/<轮次>/rc/output/spec.md;或用户直接提供的已批准 PRD);引用不复制,溯源与打回都以它为准;validate.py R10 校验存在性与批准态"
     },
     "spec_gaps": {
       "type": "array",

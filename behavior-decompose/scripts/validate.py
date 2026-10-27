@@ -426,6 +426,30 @@ def main(argv):
             schema = json.loads((SCHEMA_DIR / "state.schema.json").read_text(encoding="utf-8"))
             validate(state, schema, "state.json", "$", errs)
 
+    # R10 — 上游 spec_source 必须真实存在;指向变更目录交付副本时,
+    # 同轮 rc 须已 PASS(交付只发生在 PASS 收口)。文件缺失或未经批准都
+    # 是明确停止:不得改用其他轮次的 Spec。
+    if state is not None:
+        spec_source = state.get("spec_source")
+        if isinstance(spec_source, str) and spec_source:
+            if not Path(spec_source).is_file():
+                errs.add("state.json", "$.spec_source",
+                         f"R10: spec_source 指向的文件不存在({spec_source});"
+                         "明确停止——不得改用其他轮次的 Spec,先补齐上游或修正路径")
+            elif "openspec/changes" in Path(spec_source).as_posix():
+                rc_state = pev_dir.parent / "rc" / "state.json"
+                if rc_state.is_file():
+                    try:
+                        rc = json.loads(rc_state.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        rc = None
+                    rc_status = rc.get("status") if isinstance(rc, dict) else None
+                    if rc_status is not None and rc_status != "COMPLETE":
+                        errs.add("state.json", "$.spec_source",
+                                 f"R10: spec_source 指向变更目录的交付副本,但同轮 rc "
+                                 f"status={rc_status} 尚未 PASS;上游未经当前批准,"
+                                 "不得据此拆解,等待澄清轮收口")
+
     artifacts = []
     verifications = []
     iter_dir = pev_dir / "iterations"
