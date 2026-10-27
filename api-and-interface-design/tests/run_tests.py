@@ -507,6 +507,17 @@ def main():
         write_files(api, st, artifact(), verification("PASS"))  # artifact 目标仍只有 C1
         results.append(check("T37 target 与 state.contracts 不一致(R16)", api, False, "不一致"))
 
+        _, api = make_case(root, "t38")
+        write_files(api, state("COMPLETE"), artifact(), verification("PASS"))
+        results.append(check("T38 COMPLETE 缺用户确认被拦截(R17)", api, False,
+                             "user_confirmation"))
+
+        _, api = make_case(root, "t39")
+        st = state("COMPLETE")
+        st["user_confirmation"] = {"date": "2026-10-27"}
+        write_files(api, st, artifact(), verification("PASS"))
+        results.append(check("T39 COMPLETE 带确认记录通过(R17)", api, True))
+
     print()
     passed = sum(results)
     print(f"{passed}/{len(results)} 通过")

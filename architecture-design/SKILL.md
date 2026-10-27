@@ -130,7 +130,7 @@ INIT → PLANNING → EXECUTING → VERIFYING
 | 2 PLANNING | `agents/planner.md`、当前 mode 的 playbook | `iterations/<N>-plan.json` | 校验通过 → `state.plans` 登记,`status="EXECUTING"` |
 | 3 EXECUTING | `agents/executor.md` | `iterations/<N>-artifact.json` | 溯源三档;溯不到产品依据 → `status="blocked"` 走 BLOCKED;self_challenge 7 维自查完成、精修循环 `done` → `status="completed"` |
 | 4 VERIFYING | `agents/verifier.md` | `iterations/<N>-verification.json` | 独立性机制见下 |
-| 5 分支 | verdict | 见状态机 | PASS → 按 mode 对应模板渲染到 `output/`,同时呈交 verification 的 `warnings` 与残留项;用户确认后 `status="COMPLETE"`,设计交给下游 skill |
+| 5 分支 | verdict | 见状态机 | PASS → 按 mode 对应模板渲染到 `output/`,同时呈交 verification 的 `warnings` 与残留项;用户确认后写 `state.user_confirmation`(date+要点)并置 `status="COMPLETE"`,设计交给下游 skill。等待确认期间停在 VERIFYING;用户要求修改 → 回 EXECUTING 修订后重新评审。未带确认记录的 COMPLETE 会被 validate.py R14 拒绝 |
 
 **校验**:每步产物落盘后,先把**文件名**登记进 `state.plans` / `state.artifacts`
 (只记文件名,不存内容副本),再运行捆绑脚本——确定性检查交给脚本,不要肉眼比对:

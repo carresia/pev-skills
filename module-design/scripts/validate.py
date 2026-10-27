@@ -602,6 +602,17 @@ def semantic_rules(state, artifacts, errs):
         if status != "WAITING_FOR_UPSTREAM" and isinstance(gaps, list) and len(gaps) > 0:
             errs.add("state.json", "$.upstream_gaps", "R4: 仅 WAITING_FOR_UPSTREAM 状态允许携带非空 upstream_gaps,架构更新恢复后应清空")
 
+        # R15 — COMPLETE 与用户确认记录互相锁定(consolidate T2-2):
+        # PASS 渲染后等用户确认期间停在 VERIFYING;未确认的 COMPLETE 不得让下游开始
+        conf = state.get("user_confirmation")
+        has_conf = isinstance(conf, dict) and isinstance(conf.get("date"), str) and conf.get("date").strip()
+        if status == "COMPLETE" and not has_conf:
+            errs.add("state.json", "$.user_confirmation",
+                     "R15: status=COMPLETE 但缺少用户确认记录 user_confirmation(date)——PASS 渲染后须等用户确认,未确认前停在 VERIFYING")
+        if status != "COMPLETE" and conf is not None:
+            errs.add("state.json", "$.user_confirmation",
+                     "R15: user_confirmation 仅在 status=COMPLETE 时允许存在;确认即置 COMPLETE,等待确认期间停在 VERIFYING")
+
 
 def normalize_text(value):
     return str(value).replace("\r\n", "\n").replace("\r", "\n")
@@ -763,6 +774,7 @@ def check_cross_findings(doc, designed_ids, name, errs):
 
 
 def load_redline_library():
+    """库缺失、不可解析或 redlines 非非空数组 → 一律 None(调用方必须拒绝)。"""
     path = REDLINES_DIR / "module-redlines.json"
     if not path.is_file():
         return None
@@ -770,27 +782,44 @@ def load_redline_library():
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return as_list(data.get("redlines"))
+    redlines = data.get("redlines") if isinstance(data, dict) else None
+    if not isinstance(redlines, list) or not redlines:
+        return None
+    return redlines
 
 
 def check_redlines(doc, name, errs):
-    """R13 — 红线库:红线 id 必须在库中;适用红线未通过不得判 PASS(红线独立于评分)。"""
-    redlines = as_list(doc.get("redlines"))
-    if not redlines:
-        return
+    """R13 — 红线全覆盖:报告必须逐条说明库中每条红线是否适用及依据。
+
+    库缺失/损坏、报告缺红线部分、漏写库中任一条:一律拒绝,红线检查不可
+    静默跳过(consolidate T2-1)。条目级:适用红线未通过不得判 PASS
+    (红线独立于评分)。
+    """
     library = load_redline_library()
-    known = {r.get("id") for r in library} if library is not None else None
+    if library is None:
+        errs.add("redlines/module-redlines.json", "$",
+                 "R13: 红线库缺失或内容损坏,无法核对红线覆盖;修复库文件后重跑校验")
+        return
+    known = {r.get("id") for r in library if isinstance(r, dict)}
+    raw = doc.get("redlines")
+    if not as_list(raw):
+        errs.add(name, "$.redlines",
+                 "R13: 报告缺少红线部分——每条库中红线必须逐条说明是否适用及依据")
+        return
+    redlines = [r for r in as_list(raw) if isinstance(r, dict)]
+    covered = {r.get("id") for r in redlines}
+    for rid in sorted(known - covered, key=str):
+        errs.add(name, "$.redlines",
+                 f"R13: 库中红线 {rid!r} 未在报告中说明(漏写)")
     verdict = doc.get("verdict")
     for i, r in enumerate(redlines):
-        if not isinstance(r, dict):
-            continue
         base = f"$.redlines[{i}]"
         rid = r.get("id")
         if not nonempty_str(rid):
             errs.add(name, base, "R13: 红线缺少 id")
             continue
-        if known is not None and rid not in known:
-            errs.add(name, f"{base}.id", f"R13: 红线 {rid!r} 不在红线库中(可用: {sorted(known)})")
+        if rid not in known:
+            errs.add(name, f"{base}.id", f"R13: 红线 {rid!r} 不在红线库中(可用: {sorted(known, key=str)})")
         if not nonempty_str(r.get("details")):
             errs.add(name, f"{base}.details", "R13: 红线必须写 details(为什么适用/不适用、结论依据)")
         if r.get("applies") is True:

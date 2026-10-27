@@ -78,7 +78,7 @@ metadata:
 
 ## 状态机
 
-INIT → PLANNING → EXECUTING → VERIFYING →[verdict=PASS]→ COMPLETE(渲染 output/ → 用户确认)。
+INIT → PLANNING → EXECUTING → VERIFYING →[verdict=PASS]→ COMPLETE(渲染 output/ → 用户确认,写 `state.user_confirmation`(date+要点)再置 COMPLETE;等待确认期间停在 VERIFYING,未带确认记录的 COMPLETE 会被 validate.py R11 拒绝)。
 REVISE → EXECUTING(修订清单,不改 Plan);REPLAN → PLANNING(iteration+1);BLOCKED →
 WAITING_FOR_INPUT(缺口三选一);用户选"回上游" → WAITING_FOR_UPSTREAM(记
 upstream_gaps);上游更新 → PLANNING(只重拆受影响批次)。全图见

@@ -75,6 +75,23 @@ class R10Test(SpecSourceFixture):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("不得改用其他轮次", proc.stdout)
 
+    def test_complete_without_user_confirmation_fails(self):
+        """T2-2:PASS 渲染后未确认的 COMPLETE 不得放行(R11 互锁)。"""
+        self.state["spec_source"] = str(self.seed_rc_output_spec())
+        self.state["status"] = "COMPLETE"
+        self.flush_state()
+        proc = run_validate(self.decompose)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("user_confirmation", proc.stdout)
+
+    def test_complete_with_user_confirmation_passes(self):
+        self.state["spec_source"] = str(self.seed_rc_output_spec())
+        self.state["status"] = "COMPLETE"
+        self.state["user_confirmation"] = {"date": "2026-10-27"}
+        self.flush_state()
+        proc = run_validate(self.decompose)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_change_dir_spec_with_complete_rc_passes(self):
         self.seed_rc_output_spec(status="COMPLETE")
         self.state["spec_source"] = str(self.seed_change_dir_spec())

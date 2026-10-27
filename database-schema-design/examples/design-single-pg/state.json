@@ -6,6 +6,7 @@
   "status": "COMPLETE",
   "iteration": 1,
   "max_iterations": 5,
+  "user_confirmation": {"date": "2026-10-27", "note": "金样示例:用户确认交付"},
   "stores": [
     {"id": "D1", "kind": "postgresql", "design_status": "done", "review_status": "pass"}
   ],

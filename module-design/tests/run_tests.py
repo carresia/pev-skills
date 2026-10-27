@@ -12,6 +12,8 @@
   - 交互承接替别人认领被拦截(R5)
   - module_reviews 缺模块 / REVISE 却整体 PASS 被拦截(R14)
   - Cross 未通过却整体 PASS 被拦截(R14)
+  - 红线库缺失/损坏、报告缺红线部分、漏写库中一条均被拦截;
+    报告逐条覆盖全库时通过(R13 全覆盖,consolidate T2-1)
   - 干净产物正常通过(无假阳性)
 
 运行: python3 tests/run_tests.py
@@ -27,6 +29,18 @@ from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
 VALIDATE = SKILL / "scripts" / "validate.py"
+
+sys.path.insert(0, str(SKILL / "scripts"))
+import validate as vd  # noqa: E402  单元级用例 patch 库路径用
+
+
+def redline_entries(skip=()):
+    """按真实红线库生成全覆盖条目(每条 applies=false);skip 指定漏写的 id。"""
+    lib = json.loads((SKILL / "redlines" / "module-redlines.json")
+                     .read_text(encoding="utf-8"))
+    return [{"id": r["id"], "applies": False,
+             "details": "不适用:本夹具为合成最小用例"}
+            for r in lib["redlines"] if r["id"] not in skip]
 
 ADV_DIMS = ["failure_modes", "consistency", "concurrency", "boundary_erosion",
             "hidden_coupling", "testability", "simpler_alternative"]
@@ -157,6 +171,7 @@ def verification(verdict="PASS", **overrides):
                   "cross_consistent": True, "notes": ""},
         "strengths": [], "critical_issues": [], "warnings": [],
         "required_changes": [], "evidence_gaps": [], "confidence": "high",
+        "redlines": redline_entries(),
     }
     doc.update(overrides)
     return doc
@@ -296,6 +311,59 @@ def main():
                                              "digest": "sha256:" + hashlib.sha256(excerpt.encode()).hexdigest()}}])
         write_files(module, state(), art, verification("PASS"))
         results.append(check("T12 新鲜证据来源通过", module, True))
+
+        _, module = make_case(root, "t15")
+        ver = verification("PASS")
+        ver["redlines"] = []  # 报告缺红线部分
+        write_files(module, state(), artifact(), ver)
+        results.append(check("T15 报告缺红线部分被拦截(R13)", module, False,
+                             "缺少红线部分"))
+
+        _, module = make_case(root, "t16")
+        ver = verification("PASS", redlines=redline_entries(skip={"RED-05"}))
+        write_files(module, state(), artifact(), ver)
+        results.append(check("T16 漏写库中一条红线被拦截(R13)", module, False,
+                             "RED-05"))
+
+        _, module = make_case(root, "t19")
+        write_files(module, state("COMPLETE"), artifact(), verification("PASS"))
+        results.append(check("T19 COMPLETE 缺用户确认被拦截(R15)", module, False,
+                             "user_confirmation"))
+
+        _, module = make_case(root, "t20")
+        st = state("COMPLETE")
+        st["user_confirmation"] = {"date": "2026-10-27"}
+        write_files(module, st, artifact(), verification("PASS"))
+        results.append(check("T20 COMPLETE 带确认记录通过(R15)", module, True))
+
+        # 单元级:红线库缺失/损坏时 check_redlines 必须拒绝(不静默放过)
+        def unit_library_case(label, redlines_dir):
+            saved = vd.REDLINES_DIR
+            vd.REDLINES_DIR = redlines_dir
+            try:
+                errs = vd.Errors()
+                vd.check_redlines(verification("PASS"),
+                                  "iterations/01-verification.json", errs)
+                hit = any("红线库" in getattr(e, "message", str(e))
+                          for e in errs.items)
+            finally:
+                vd.REDLINES_DIR = saved
+            ok = bool(len(errs)) and hit
+            print(f"  [{'PASS' if ok else 'FAIL'}] {label} "
+                  f"errors={len(errs)}")
+            if not ok:
+                for e in errs.items:
+                    print(f"        {getattr(e, 'message', e)}")
+            return ok
+
+        results.append(unit_library_case(
+            "T17 红线库缺失被拦截(R13)", root / "no-such-redlines"))
+        broken = root / "broken-redlines"
+        broken.mkdir()
+        (broken / "module-redlines.json").write_text("{not json",
+                                                     encoding="utf-8")
+        results.append(unit_library_case(
+            "T18 红线库损坏被拦截(R13)", broken))
 
     print()
     passed = sum(results)

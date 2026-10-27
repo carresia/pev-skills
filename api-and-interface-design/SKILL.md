@@ -171,7 +171,7 @@ revise_required)。整体 `status` 停在 VERIFYING 直到 Cross 通过。
 | 2 PLANNING | `agents/planner.md`、`playbooks/design.md` | `iterations/<N>-plan.json` | 校验通过 → `state.plans` 登记,`status="EXECUTING"` |
 | 3 EXECUTING | `agents/executor.md` | `iterations/<N>-artifact.json`(全部契约面) | 逐契约面完成:溯源三档 + self_challenge 7 维;跨契约自查(cross_check)完成;精修循环 `done` → `status="completed"`,全部契约面 `design_status="done"` |
 | 4 VERIFYING | `agents/verifier.md` | `iterations/<N>-verification.json` | 逐契约面 contract_reviews + 全部 PASS 后 cross_review;独立性机制见下 |
-| 5 分支 | verdict | 见状态机 | PASS → 逐契约面按深度渲染到 `output/<contract-id>/`,同时呈交 verification 的 `warnings` 与残留项;用户确认后 `status="COMPLETE"`,契约交给下游 skill |
+| 5 分支 | verdict | 见状态机 | PASS → 逐契约面按深度渲染到 `output/<contract-id>/`,同时呈交 verification 的 `warnings` 与残留项;用户确认后写 `state.user_confirmation`(date+要点)并置 `status="COMPLETE"`,契约交给下游 skill。等待确认期间停在 VERIFYING;未带确认记录的 COMPLETE 会被 validate.py R17 拒绝 |
 
 **校验**:每步产物落盘后,先把**文件名**登记进 `state.plans` / `state.artifacts`
 (只记文件名,不存内容副本),再运行捆绑脚本——确定性检查交给脚本,不要肉眼比对:

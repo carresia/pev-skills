@@ -92,7 +92,7 @@ DECISION。**数据存储职责集中**:正常情况下一个项目只有一个�
 ## 状态机
 
 INIT → PLANNING → EXECUTING → VERIFYING(逐库评审)→ 全库 PASS → Cross → PASS →
-COMPLETE(渲染 output/,用户确认)。分支与全图见
+COMPLETE(渲染 output/ → 用户确认,写 `state.user_confirmation`(date+要点)再置 COMPLETE;等待确认期间停在 VERIFYING,未带确认记录的 COMPLETE 会被 validate.py R17 拒绝)。分支与全图见
 [pev-protocol.md](references/pev-protocol.md)。`state.stores[]` 逐库跟踪
 design_status/review_status,整体停在 VERIFYING 直到 Cross 通过。
 

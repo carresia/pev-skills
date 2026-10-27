@@ -56,6 +56,7 @@
     "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R9 对账)"},
     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R9 对账)"},
     "iteration": {"type": "integer", "minimum": 0},
-    "max_iterations": {"type": "integer", "minimum": 1, "default": 5}
+    "max_iterations": {"type": "integer", "minimum": 1, "default": 5},
+    "user_confirmation": {"type": "object", "required": ["date"], "properties": {"date": {"type": "string", "description": "用户确认交付的日期(YYYY-MM-DD)"}, "note": {"type": "string", "description": "确认要点(可选)"}}, "description": "用户对最终交付的确认记录;仅 status=COMPLETE 时允许存在,COMPLETE 必须携带(validate.py 互锁)"}
   }
 }

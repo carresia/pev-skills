@@ -605,6 +605,17 @@ def main():
         write_files(db, mongo_state(), artifact(st), verification("REVISE"))
         results.append(check("T44 mongodb 缺 validator(R5)", db, False, "validator"))
 
+        _, db = make_case(root, "t46")
+        write_files(db, state("COMPLETE"), artifact(), verification("PASS"))
+        results.append(check("T46 COMPLETE 缺用户确认被拦截(R17)", db, False,
+                             "user_confirmation"))
+
+        _, db = make_case(root, "t47")
+        st = state("COMPLETE")
+        st["user_confirmation"] = {"date": "2026-10-27"}
+        write_files(db, st, artifact(), verification("PASS"))
+        results.append(check("T47 COMPLETE 带确认记录通过(R17)", db, True))
+
         # 随包金样示例必须始终通过校验(防腐坏)
         example_db = SKILL / "examples" / "design-single-pg"
         code, out = run(example_db)

@@ -103,7 +103,7 @@ verification 覆盖同号文件。文件号零填充两位(01、02…)。
 | 2 PLANNING | `agents/planner.md`、`playbooks/decompose.md` | `iterations/<N>-plan.json` | 校验通过 → `state.plans` 追加,`status="EXECUTING"` |
 | 3 EXECUTING | `agents/executor.md` | `iterations/<N>-artifact.json` | 溯源优先;溯不到 → `status="blocked"` 走 BLOCKED;全批次完成、精修循环 `done` → `status="completed"`(溯源与精修协议见 agents/executor.md) |
 | 4 VERIFYING | `agents/verifier.md` | `iterations/<N>-verification.json` | 独立性机制见下 |
-| 5 分支 | verdict | 见状态机 | PASS → 按 `templates/catalog.md` 渲染到 `output/catalog.md` 呈最终预览,同时呈交 verification 的 `warnings` 与脚本「逐 story 适用未覆盖」清单的残留项,并说明**单轮评审通过不等于零残留**(评审有一致性随机性,已知残留以呈交清单为准);用户确认后 `status="COMPLETE"`,目录交给下游 skill |
+| 5 分支 | verdict | 见状态机 | PASS → 按 `templates/catalog.md` 渲染到 `output/catalog.md` 呈最终预览,同时呈交 verification 的 `warnings` 与脚本「逐 story 适用未覆盖」清单的残留项,并说明**单轮评审通过不等于零残留**(评审有一致性随机性,已知残留以呈交清单为准);用户确认后写 `state.user_confirmation`(date+要点)并置 `status="COMPLETE"`,目录交给下游 skill。等待确认期间停在 VERIFYING;未带确认记录的 COMPLETE 会被 validate.py R11 拒绝 |
 
 **校验**:每步产物落盘后立即运行捆绑脚本——确定性检查交给脚本,不要肉眼比对:
 

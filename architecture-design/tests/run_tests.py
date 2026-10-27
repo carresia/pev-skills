@@ -196,6 +196,18 @@ def main():
         write_files(arch, state(), art, verification("PASS"))
         results.append(check("T7 新鲜证据来源通过", arch, True))
 
+        _, arch = make_case(root, "t8")
+        st = state("COMPLETE")  # PASS 已渲染但用户未确认
+        write_files(arch, st, artifact(), verification("PASS"))
+        results.append(check("T8 COMPLETE 缺用户确认被拦截", arch, False,
+                             "user_confirmation"))
+
+        _, arch = make_case(root, "t9")
+        st = state("COMPLETE")
+        st["user_confirmation"] = {"date": "2026-10-27", "note": "用户看过并确认"}
+        write_files(arch, st, artifact(), verification("PASS"))
+        results.append(check("T9 COMPLETE 带确认记录通过", arch, True))
+
     print()
     passed = sum(results)
     print(f"{passed}/{len(results)} 通过")

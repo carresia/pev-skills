@@ -703,6 +703,17 @@ def semantic_rules(state, artifacts, errs):
         if status != "WAITING_FOR_UPSTREAM" and isinstance(gaps, list) and len(gaps) > 0:
             errs.add("state.json", "$.upstream_gaps", "R4: 仅 WAITING_FOR_UPSTREAM 状态允许携带非空 upstream_gaps,上游更新恢复后应清空")
 
+        # R17 — COMPLETE 与用户确认记录互相锁定(consolidate T2-2):
+        # PASS 渲染后等用户确认期间停在 VERIFYING;未确认的 COMPLETE 不得让下游开始
+        conf = state.get("user_confirmation")
+        has_conf = isinstance(conf, dict) and isinstance(conf.get("date"), str) and conf.get("date").strip()
+        if status == "COMPLETE" and not has_conf:
+            errs.add("state.json", "$.user_confirmation",
+                     "R17: status=COMPLETE 但缺少用户确认记录 user_confirmation(date)——PASS 渲染后须等用户确认,未确认前停在 VERIFYING")
+        if status != "COMPLETE" and conf is not None:
+            errs.add("state.json", "$.user_confirmation",
+                     "R17: user_confirmation 仅在 status=COMPLETE 时允许存在;确认即置 COMPLETE,等待确认期间停在 VERIFYING")
+
         if status in ("VERIFYING", "COMPLETE") and not isinstance(state.get("cross"), dict):
             errs.add("state.json", "$.cross",
                      "R15: status=VERIFYING/COMPLETE 时必须携带 cross(Cross 跨契约一致性评审状态)")

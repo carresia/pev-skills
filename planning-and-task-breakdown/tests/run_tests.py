@@ -190,6 +190,18 @@ def _(x):
     return run_case(full_files(), True)
 
 
+@t("COMPLETE 缺用户确认被拦截(R11)")
+def _(x):
+    return run_case(full_files(st=state("COMPLETE")), False, "user_confirmation")
+
+
+@t("COMPLETE 带确认记录通过(R11)")
+def _(x):
+    st = state("COMPLETE")
+    st["user_confirmation"] = {"date": "2026-10-27"}
+    return run_case(full_files(st=st), True)
+
+
 @t("干净 review 工程全绿(mode=review)")
 def _(x):
     return run_case(full_files(st=state(mode="review")), True)
