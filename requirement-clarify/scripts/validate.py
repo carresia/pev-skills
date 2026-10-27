@@ -280,6 +280,18 @@ def semantic_rules(state, plans, artifacts, verifications, pev_dir, errs):
         if not body:
             errs.add("state.json", "$.status",
                      "R8: status=COMPLETE 但 output/spec.md 不存在或为空——没有交付物不算完成")
+        deliver_to = state.get("deliver_to")
+        if isinstance(deliver_to, str) and deliver_to:
+            # rc → <轮次> → .pev → workspace;deliver_to 相对 workspace
+            dspec = pev_dir.parent.parent.parent / deliver_to / "spec.md"
+            try:
+                dbody = dspec.read_text(encoding="utf-8").strip()
+            except OSError:
+                dbody = ""
+            if not dbody:
+                errs.add("state.json", "$.deliver_to",
+                         f"R8: status=COMPLETE 但交付副本 {deliver_to}/spec.md "
+                         "不存在或为空——登记了交付目录却没有交付物不算完成")
         it, mx = state.get("iteration"), state.get("max_iterations")
         if isinstance(it, int) and isinstance(mx, int) and it > mx:
             errs.add("state.json", "$.iteration",
@@ -390,6 +402,18 @@ def deliverability_gates(state, verifications, rc_root, errs):
     if published != text.encode("utf-8"):
         errs.add("output/spec.md", None,
                  "P 门: 发布物与来源确定性渲染不一致(缺失或手工修改),不可交付")
+    deliver_to = state.get("deliver_to")
+    if isinstance(deliver_to, str) and deliver_to:
+        # rc → <轮次> → .pev → workspace;deliver_to 相对 workspace
+        dspec = rc_root.parent.parent.parent / deliver_to / "spec.md"
+        try:
+            dpublished = dspec.read_bytes()
+        except OSError:
+            dpublished = None
+        if dpublished != text.encode("utf-8"):
+            errs.add(f"{deliver_to}/spec.md", None,
+                     "P 门: 交付副本与来源确定性渲染不一致(缺失或手工修改),"
+                     "不可交付")
 
 
 def main(argv):

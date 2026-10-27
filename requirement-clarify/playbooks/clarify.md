@@ -9,6 +9,11 @@
 `state.prd_source` 存在且可读。无 PRD → 分流:还没 PRD 用 `product-manager`,
 从零澄清写 spec 用 `spec-driven-development`,本 skill 不启动。
 
+Spec 要交给 OpenSpec 工作流时:变更目录已由 `openspec new change` 创建,
+init 时加 `--deliver-to <变更目录>` 登记;PASS 收口自动把 spec.md 交付到
+该目录,执行状态与决策记录仍留在 `.pev/<轮次>/rc/`。未登记的轮次照旧只
+发布 `rc/output/spec.md`。
+
 ## Plan 骨架
 
 1. `interrogate_value` — 价值性问题一批(为什么做/价值假设/不做会怎样/成功长什么样),锚 PRD §背景/§目标 与上游 Evidence Ledger。

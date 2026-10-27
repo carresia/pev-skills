@@ -44,7 +44,7 @@ description: |
 
 | 何时用 | 命令 |
 |---|---|
-| 开始/续接一轮澄清 | `python3 <skill>/scripts/init.py --workspace <含 .pev/ 的目录> --prd-source <PRD 路径> --objective <goal 草稿路径>` |
+| 开始/续接一轮澄清 | `python3 <skill>/scripts/init.py --workspace <含 .pev/ 的目录> --prd-source <PRD 路径> --objective <goal 草稿路径>`;变更已创建且 Spec 要交给 OpenSpec 工作流时,加 `--deliver-to <变更目录,相对 workspace>` 登记 PASS 后把 spec.md 交付到该目录 |
 | 不知道从哪轮续接 | `python3 <skill>/scripts/init.py --locate --workspace <目录>`(只读汇报) |
 | 用户要求推倒重来 | 同上 init 加 `--restart`(自动归档 rc.bak-<日期>) |
 | Plan 草稿写完 | `python3 <skill>/scripts/commit.py --rc-root <rc 目录> plan <草稿路径>` |
@@ -55,9 +55,9 @@ description: |
 | 任何时候想确认现状/定位续跑点 | `python3 <skill>/scripts/validate.py --rc-root <rc 目录>`(只读) |
 
 **写入边界**:state.json、登记册、验证输入快照、provenance、`output/spec.md`
-一律由脚本写;模型只写三类草稿文件(plan/artifact/verification JSON,按
-`schemas/` 校验)与 state-update 补丁。手改脚本管辖的文件会被逐字节/摘要
-校验当场发现并拒绝。
+与登记的交付副本(`<deliver_to>/spec.md`)一律由脚本写;模型只写三类草稿
+文件(plan/artifact/verification JSON,按 `schemas/` 校验)与 state-update
+补丁。手改脚本管辖的文件会被逐字节/摘要校验当场发现并拒绝。
 
 ## 草稿要点
 

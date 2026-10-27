@@ -118,6 +118,7 @@ def main():
     prd_source = None
     objective_path = None
     explicit_round = None
+    deliver_to = None
     i = 0
     while i < len(rest):
         a = rest[i]
@@ -133,6 +134,9 @@ def main():
         elif a == "--round" and i + 1 < len(rest):
             explicit_round = rest[i + 1]
             i += 2
+        elif a == "--deliver-to" and i + 1 < len(rest):
+            deliver_to = rest[i + 1]
+            i += 2
         else:
             rep.command_error(command, f"无法识别的参数: {a}")
             return rep.emit()
@@ -145,6 +149,24 @@ def main():
 
     if do_locate_mode:
         return do_locate(workspace, rep)
+
+    # 交付登记(T1-6):spec.md 额外交付到变更目录;存相对 workspace 的
+    # POSIX 路径。目录须已存在(变更由 openspec new change 先行创建)。
+    deliver_rel = None
+    if deliver_to is not None:
+        p = Path(deliver_to).expanduser()
+        if p.is_absolute():
+            try:
+                p = p.resolve().relative_to(workspace)
+            except ValueError:
+                rep.command_error(command,
+                                  f"--deliver-to 须在 workspace 内: {deliver_to}")
+                return rep.emit()
+        deliver_rel = p.as_posix()
+        if not (workspace / deliver_rel).is_dir():
+            rep.command_error(command,
+                              f"--deliver-to 目录不存在(先创建变更): {deliver_rel}")
+            return rep.emit()
 
     if prd_source is None:
         rep.command_error(command, "缺少 --prd-source <PRD 路径>")
@@ -210,6 +232,8 @@ def main():
         "iteration": 0,
         "max_iterations": 5,
     }
+    if deliver_rel is not None:
+        state["deliver_to"] = deliver_rel
     if goal_missing:
         state["resume_to"] = "PLANNING"
     write_json_atomic(rc_dir / "state.json", state)

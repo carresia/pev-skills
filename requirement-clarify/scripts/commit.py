@@ -228,6 +228,22 @@ def closeout_pass(rc_root, state, rep, was_bound):
                   f"iteration={iteration} 超过 max_iterations="
                   f"{state.get('max_iterations', 5)},不得宣称完成")
         return rep.emit()
+    # 4.5) 交付副本冲突检查(T1-6):登记 deliver_to 时,变更目录已有
+    # 不同内容的 spec.md(其他轮次或手工写入)→ 整体失败,两处都不写
+    deliver_to = state.get("deliver_to")
+    deliver_path = None
+    if isinstance(deliver_to, str) and deliver_to:
+        # rc → <轮次> → .pev → workspace;deliver_to 相对 workspace
+        deliver_path = rc_root.parent.parent.parent / deliver_to / "spec.md"
+        try:
+            occupied = deliver_path.read_bytes()
+        except OSError:
+            occupied = None
+        if occupied is not None and occupied != expected:
+            rep.error(f"{deliver_to}/spec.md", None,
+                      f"交付目标已被其他内容占用({deliver_path}),"
+                      "拒绝覆盖;确认归属后人工处理目标文件再重跑")
+            return rep.emit()
     # 5) 原子发布 → 6) 原子 COMPLETE(状态+事件同一次落盘)
     try:
         spec_path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,6 +254,17 @@ def closeout_pass(rc_root, state, rep, was_bound):
         rep.error("output/spec.md", None, f"写入失败,旧文件保持原状: {e}")
         return rep.emit()
     rep.written.append("output/spec.md")
+    if deliver_path is not None:
+        try:
+            deliver_path.parent.mkdir(parents=True, exist_ok=True)
+            dtmp = deliver_path.parent / ".render.tmp"
+            dtmp.write_bytes(expected)
+            dtmp.replace(deliver_path)
+        except OSError as e:
+            rep.error(f"{deliver_to}/spec.md", None,
+                      f"交付写入失败: {e};原发布物 output/spec.md 已更新")
+            return rep.emit()
+        rep.written.append(f"{deliver_to}/spec.md")
     final_ver = read_json(rc_root / "iterations"
                           / f"{file_no(iteration):02d}-verification.json")
     advance_and_write(rc_root, state, rep, event="complete", dest="COMPLETE",
