@@ -15,7 +15,7 @@ SKILL.md 的流程展开:Input Gate 全表、三选一、运行目录全树、�
 | 同轮设计产物疑似陈旧 | 该条 aux **不自动登记**:判据=该 aux 目录最新产物的修改时间早于 `arch/` 最新产物(arch 重跑/REPLAN 过即命中)。浮出问用户「此产物对应最新架构吗」,确认有效才登记;失效 → 回对应设计 skill(module/api/db)重做 |
 | 用户直接给架构文档(±Spec/设计文档) | `arch_source`=该文档。建议先走 architecture-design 出正式产物;用户坚持 → 记 DECISION 继续,风险写明:对账分母粒度不可靠,覆盖门禁的保障减弱 |
 | 只有 module/api/db 产物,无 arch | 缺门槛上游 → 建议回 architecture-design(模块边界、依赖方向、数据所有权是任务排序的依据);用户坚持直接拆 → DECISION 记风险后继续 |
-| 只有 Spec/PRD,无任何技术设计 | 不启动:有业务 PRD → `requirement-clarify` 澄清为工程 Spec;已有 Spec → `behavior-decompose` 拆行为目录;然后都经 `architecture-design` 出架构 |
+| 只有 Spec/PRD,无任何技术设计 | **未批准跳过架构设计** → 不启动:有业务 PRD → `requirement-clarify` 澄清为工程 Spec;已有 Spec → `behavior-decompose` 拆行为目录;然后都经 `architecture-design` 出架构。批准跳过 = workflow state 中 design 标记 skipped(附 reason/evidence/decidedBy),或用户明确拍板。**已批准跳过** → 以 Spec + 行为目录为上游,核对 Spec §10 实施决策:覆盖模块职责与接口/数据约束 → DECISION(依据=跳过拍板)后 INIT,上游登记 `spec_decisions`;缺模块职责或接口约定 → 列出缺什么,记 `unresolved` 挂起,不虚构决策、不强制补做架构 |
 | 用户给一份已有任务清单/实施计划要评审 | **review 场景**(`mode="review"`,走 `playbooks/review.md`) |
 | 拆解中发现上游层缺口(架构未定模块间协议、契约缺错误语义、DDL 撑不住约束) | 不猜:记入 `unresolved` → 挂起等用户三选一 |
 

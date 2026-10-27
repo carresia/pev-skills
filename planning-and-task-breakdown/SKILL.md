@@ -3,7 +3,8 @@ name: planning-and-task-breakdown
 description: |
   实施任务拆解引擎(PEV:Planner–Executor–Verifier 闭环,Evidence Ledger 强制区分
   事实、用户拍板与技术推断)。当上游已有已批准的架构设计(architecture-design 产出,
-  通常 .pev/<轮次>/arch/output/;或用户直接提供的架构文档),需要把架构连同同轮
+  通常 .pev/<轮次>/arch/output/;或用户直接提供的架构文档),或用户已批准跳过
+  架构设计且工程 Spec 的实施决策覆盖模块职责与接口约定,需要把上游连同同轮
   模块设计/接口契约/数据库 schema/行为目录展开为有序、可验证、带依赖与并行边界的
   实施任务清单时使用。
   用户说"拆任务"、"任务拆解"、"实施计划"、"排期"、"排任务"、"任务清单"、
@@ -62,9 +63,16 @@ metadata:
   `state.json` 里只记路径与类型,引用不复制,不生成任何新文件;疑似陈旧的
   (arch 重跑后早于 arch 最新产物)先确认再登记,判据见 pev-protocol
 - 用户直接给架构文档 → 建议先走 architecture-design;坚持 → 记 DECISION 继续,风险写明
-- 只有 Spec/PRD、无任何技术设计 → 本 skill 不启动:有业务 PRD 先走
-  `requirement-clarify` 澄清为 Spec,已有 Spec 先走 `behavior-decompose` 拆行为目录,
-  然后都经 `architecture-design` 出架构
+- 无架构产物(arch/module/api/db 都没有)→ 分两种:
+  - **未批准跳过架构设计** → 本 skill 不启动:有业务 PRD 先走
+    `requirement-clarify` 澄清为 Spec,已有 Spec 先走 `behavior-decompose` 拆行为目录,
+    然后都经 `architecture-design` 出架构。批准跳过 = workflow state 中 design 标记
+    skipped(附 reason/evidence/decidedBy),或用户在对话中明确拍板
+  - **已批准跳过架构设计** → 以 Spec + 行为目录为上游,核对 Spec §10 实施决策
+    (T1-15 起 Spec 含该段):覆盖模块职责与接口/数据约束 → 记 DECISION
+    (依据=批准跳过的拍板)后 INIT,上游登记 `spec_decisions`;缺模块职责或
+    接口约定 → 明确列出缺什么,记 `unresolved` 挂起等用户处理——不虚构决策,
+    也不强制补做架构设计
 - 给已有任务清单/实施计划要评审 → **review 场景**(`playbooks/review.md`)
 - 拆解中发现上游层缺口 → 不猜,记 `unresolved` 挂起等三选一
 
