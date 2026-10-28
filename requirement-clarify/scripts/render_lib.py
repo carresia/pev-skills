@@ -60,7 +60,8 @@ def esc_cell(value):
 
 
 def esc_inline(value):
-    value = value.replace("\r\n", "\n").replace("\r", "\n").replace("\n", " ")
+    # 换行保留(2026-10-28:多行标量渲染为真实换行;表格单元格仍走 esc_cell 压平)
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
     return re.sub(r"([\\*_`\[\]<>])", r"\\\1", value)
 
 
