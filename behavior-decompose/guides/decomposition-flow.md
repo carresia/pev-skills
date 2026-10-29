@@ -37,12 +37,20 @@ EXECUTING 阶段的推理不在文件里,就当作不存在。
 ├── pm/                           # product-manager 的产物,合法溯源源
 ├── rc/                           # requirement-clarify 的产物(Evidence Ledger、澄清记录),合法溯源源
 └── decompose/                    # 本 skill 的工作目录
-    ├── state.json                # 共享状态(schemas/state.schema.json),含 spec_source
+    ├── state.json                # 共享状态(schemas/state.schema.json),含 spec_source 与 reviews 登记册
     ├── iterations/
     │   ├── 01-plan.json          # 每轮产物按 schema 校验
     │   ├── 01-artifact.json
-    │   └── 01-verification.json
-    └── output/                   # PASS 后按 templates/ 渲染的最终交付物
+    │   └── 01-verification.json  # 最新一次审查的投影(validate.py 兼容口径;历史在 reviews/)
+    ├── reviews/                  # 审查历史,只追加不覆盖(review.py 管理)
+    │   ├── r001/
+    │   │   ├── input.json        # 冻结输入:命名输入哈希、diff、影响闭包、机器检查、待核销发现
+    │   │   ├── artifact.json     # 被审查 artifact 的逐字节冻结副本
+    │   │   ├── candidate.json    # Verifier 写的审查候选(提交后移除)
+    │   │   └── review.json       # 已提交审查(绑定输入/副本哈希,稳定发现 ID)
+    │   ├── full-approval.json    # 用户批准再次 full 的记录(绑定命名输入摘要与决定来源)
+    │   └── confirmation.json     # 用户交付确认(绑定 artifact 哈希与命名输入摘要)
+    └── output/                   # PASS 后由 review.py 机械渲染的最终交付物 catalog.md
 ```
 
 上游**引用不复制**:`state.spec_source` 只记录路径。OpenSpec 工作流变更优先用
@@ -54,7 +62,10 @@ EXECUTING 阶段的推理不在文件里,就当作不存在。
 停止并等待上游,不得改用其他轮次的 Spec。
 
 文件名中的 `<N>` 是迭代号。REVISE 轮复用原 Plan,因此只有 `<N>-artifact.json` /
-`<N>-verification.json` 而没有 `<N>-plan.json`——**这是正常的,不是缺文件**。
+`<N>-verification.json` 而没有 `<N>-plan.json`——**这是正常的,不是缺文件**。REVISE
+不改迭代号;每次审查(无论 full 还是 delta)在 `reviews/r<NNN>/` 各占一个只追加的
+目录,`<N>-verification.json` 始终是最新一次审查的投影——同号 artifact 可以在同一次
+运行里被多次修订重审,历史审查记录与被审版本一一绑定,不随投影更新而丢失。
 
 用户明确要求重开时:把该轮 `decompose/` 归档为 `decompose.bak-<日期>/`(不动同轮的
 `pm/`、`rc/`),再在本轮次内重建——这是唯一允许覆盖已有产物的入口。

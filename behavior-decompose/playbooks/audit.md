@@ -19,8 +19,10 @@
    填树,并**补 `category_defaults`**——按既有目录的适用面归纳全局适用/豁免,全局豁免
    写项目级依据(这本身就是审计判断的一部分);能溯源的条目补 `trace` + Evidence
    Ledger(FACT),溯不到的留空——这正是 Verifier 要抓的。
-3. 以 `agents/verifier.md` 跑 5 项检查矩阵 + 7 维评分 + 覆盖率门禁,产出
-   `01-verification.json`,运行校验脚本。
+3. 审查走单一入口:跑 `scripts/review.py`(生成冻结输入与机器检查),按
+   `agents/verifier.md` 完成 5 项检查矩阵 + 7 维评分 + 覆盖率门禁,写
+   `reviews/<id>/candidate.json`,再跑同一命令提交校验(`01-verification.json`
+   由脚本写为投影)。
 4. 呈现审计报告(verdict + findings by severity)。
 
 ## 分支

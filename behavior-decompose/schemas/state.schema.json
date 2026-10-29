@@ -55,8 +55,21 @@
     },
     "plans": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 plan 文件名登记册,不存内容副本(validate.py R9 对账)"},
     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "iterations/ 下 artifact 文件名登记册,不存内容副本(validate.py R9 对账)"},
+    "reviews": {
+      "type": "array",
+      "description": "审查登记册(review.py 维护):每项 {id, path, sha256} 指向 reviews/<id>/review.json;只追加,与盘上双向对账以检测历史覆盖/篡改;模型不手工编辑",
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "sha256"],
+        "properties": {
+          "id": {"type": "string", "description": "审查 ID,如 r001"},
+          "path": {"type": "string", "description": "相对 decompose/ 的 review.json 路径"},
+          "sha256": {"type": "string", "description": "review.json 的 SHA-256"}
+        }
+      }
+    },
     "iteration": {"type": "integer", "minimum": 0},
     "max_iterations": {"type": "integer", "minimum": 1, "default": 5},
-    "user_confirmation": {"type": "object", "required": ["date"], "properties": {"date": {"type": "string", "description": "用户确认交付的日期(YYYY-MM-DD)"}, "note": {"type": "string", "description": "确认要点(可选)"}}, "description": "用户对最终交付的确认记录;仅 status=COMPLETE 时允许存在,COMPLETE 必须携带(validate.py 互锁)"}
+    "user_confirmation": {"type": "object", "required": ["date"], "properties": {"date": {"type": "string", "description": "用户确认交付的日期(YYYY-MM-DD)"}, "note": {"type": "string", "description": "确认要点(可选)"}, "artifact_sha256": {"type": "string", "description": "确认绑定的 artifact SHA-256(review.py 校验 reviews/confirmation.json 后写入;确认与 COMPLETE 之间任何输入编辑都使确认失效)"}}, "description": "用户对最终交付的确认记录;仅 status=COMPLETE 时允许存在,COMPLETE 必须携带(validate.py 互锁);由 review.py 从 reviews/confirmation.json 转写"}
   }
 }

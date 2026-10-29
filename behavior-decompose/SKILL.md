@@ -10,9 +10,9 @@ description: |
   任务(planning-and-task-breakdown)、架构设计(architecture-design)。
 license: MIT
 metadata:
-  version: 2.1.0
+  version: 2.2.0
   category: product
-  updated: 2026-09-24
+  updated: 2026-10-29
 ---
 
 # Behavior Decompose
@@ -89,8 +89,9 @@ INIT → PLANNING → EXECUTING → VERIFYING
 ```
 
 **迭代号 `<N>`**:进入新一轮 PLANNING(REPLAN、上游已更新)时 `iteration` +1,产物用
-新号,旧迭代文件原样保留;REVISE 轮不改号,复用当前 `<N>`,修订后的 artifact /
-verification 覆盖同号文件。文件号零填充两位(01、02…)。
+新号,旧迭代文件原样保留;REVISE 轮不改号,复用当前 `<N>`。审查历史在 `reviews/r<NNN>/`
+只追加、不覆盖(冻结输入 + 审查记录各一份);`iterations/<N>-verification.json` 只是最新
+一次审查的投影,供 validate.py 与下游按旧口径消费。文件号零填充两位(01、02…)。
 
 ## 执行协议
 
@@ -102,8 +103,8 @@ verification 覆盖同号文件。文件号零填充两位(01、02…)。
 | 1 INIT | 上游路径 | `.pev/<轮次>/decompose/state.json`:`status="INIT"`、`iteration=0`、`max_iterations=5`、`spec_source` | 轮次跟随上游(规则见 guides「运行目录与产物」);goal 能从上游推断则记入 `assumptions`,不能则一次性问齐,不逐条追问 |
 | 2 PLANNING | `agents/planner.md`、`playbooks/decompose.md` | `iterations/<N>-plan.json` | 校验通过 → `state.plans` 追加,`status="EXECUTING"` |
 | 3 EXECUTING | `agents/executor.md` | `iterations/<N>-artifact.json` | 溯源优先;溯不到 → `status="blocked"` 走 BLOCKED;全批次完成、精修循环 `done` → `status="completed"`(溯源与精修协议见 agents/executor.md) |
-| 4 VERIFYING | `agents/verifier.md` | `iterations/<N>-verification.json` | 独立性机制见下 |
-| 5 分支 | verdict | 见状态机 | PASS → 按 `templates/catalog.md` 渲染到 `output/catalog.md` 呈最终预览,同时呈交 verification 的 `warnings` 与脚本「逐 story 适用未覆盖」清单的残留项,并说明**单轮评审通过不等于零残留**(评审有一致性随机性,已知残留以呈交清单为准);用户确认后写 `state.user_confirmation`(date+要点)并置 `status="COMPLETE"`,目录交给下游 skill。等待确认期间停在 VERIFYING;未带确认记录的 COMPLETE 会被 validate.py R11 拒绝 |
+| 4 VERIFYING | `scripts/review.py`(派发)、`agents/verifier.md` | `reviews/<id>/input.json`(脚本生成)→ `reviews/<id>/candidate.json`(Verifier 写) | 审查编排全部走 `review.py`(见下「审查编排」);机器检查不通过时脚本直接拒绝,不派发 Verifier |
+| 5 分支 | verdict(由 `review.py` 提交并路由) | 见状态机 | PASS → 脚本机械渲染 `output/catalog.md` 呈最终预览,同时呈交 review 的 `warnings` 与脚本「逐 story 适用未覆盖」清单的残留项,并说明**单轮评审通过不等于零残留**(评审有一致性随机性,已知残留以呈交清单为准);用户确认后写 `reviews/confirmation.json`(绑定 artifact 哈希与命名输入摘要),重跑 `review.py` 校验确认、复核渲染一致后写 `user_confirmation` 并置 `status="COMPLETE"`,目录交给下游 skill。等待确认期间停在 VERIFYING;确认与完成之间任何输入编辑都使确认与完成资格失效(R11 互锁由脚本满足) |
 
 **校验**:每步产物落盘后立即运行捆绑脚本——确定性检查交给脚本,不要肉眼比对:
 
@@ -116,6 +117,32 @@ plan / artifact 落盘后**立即把文件名追加进** `state.plans` / `state.
 目录,登记必须先于校验,否则新落盘文件会被 R9 误报为未登记。校验失败立即修复,
 不得带病流转。仅当环境无法执行 Python 时才逐字段人工对照 `schemas/`,
 并在最终报告里注明"未经过脚本校验"。
+
+**审查编排(单一入口)**:进入 VERIFYING 后不再手写 verification 文件,全部审查步骤由
+`review.py` 按磁盘状态推进,模型只做脚本停在眼前的那个判断:
+
+```bash
+python3 <skill 目录>/scripts/review.py <项目>/.pev/<轮次>/decompose/
+```
+
+- 命令每次返回 JSON:`ok / status / review / written / errors / warnings / next_action / resume`。
+  `next_action.actor` 指明下一步归谁(verifier / executor / planner / user),`resume` 给出新会话
+  恢复用的完整命令;中断后重跑同一命令幂等收敛,只读磁盘即可判断下一步。
+- 脚本先做机器检查(schema/语义规则、ID 唯一、悬空依赖、依赖环、审查登记与链一致性),
+  必需项失败直接拒绝,不派发 Verifier;通过后生成冻结输入 `reviews/r<NNN>/input.json`
+  (命名输入哈希、diff、影响闭包、待核销发现、coverage)并冻结当前 artifact 副本。
+  首次审查 scope=full;后续修订(含 REPLAN 后)默认 delta,未变内容不重复审查。
+- Verifier 只写 `reviews/<id>/candidate.json`(scope、verdict、逐项核销 resolutions、
+  新发现);再跑同一命令即校验提交:复核输入哈希、发现核销与审查链后按固定映射路由状态
+  (PASS→停在 VERIFYING 等确认;REVISE→EXECUTING;REPLAN→PLANNING+新迭代;
+  BLOCKED→WAITING_FOR_INPUT/WAITING_FOR_SPEC)。REVISE 不是 state,模型不得手写下一次状态。
+- 影响范围无法界定(自由文本歧义、上游/审查标准变更且无可核验旧版本等)时脚本暂停
+  (PAUSED)并说明缺口;此时由用户明确批准才可再次 full:写 `reviews/full-approval.json`
+  (绑定 `named_inputs_digest` 与决定来源)。批准与交付确认是两份独立记录,不得互相替代。
+- COMPLETE 只由脚本写入:完整基线+连续审查链有效、最新 review PASS、累积必改项全部核销、
+  机器检查通过、渲染一致、`reviews/confirmation.json` 绑定当前 artifact 哈希,缺一不可。
+  历史 REVISE 保留原结论,不要求全部历史为 PASS;delta PASS 不表述为完整审查 PASS。
+- 旧运行(无可绑定冻结输入的历史)不能直接当基线,同样经用户批准 full 后重建。
 
 **Verifier 的独立性**——有子代理能力(如 Claude Code):spawn 一个只读子代理,只给它
 `agents/verifier.md` 与 `.pev/<轮次>/decompose/` 相关文件路径,以及 `spec_source` 指向的上游文件;
