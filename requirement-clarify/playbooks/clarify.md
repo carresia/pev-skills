@@ -18,7 +18,7 @@ init 时加 `--deliver-to <变更目录>` 登记;PASS 收口自动把 spec.md �
 
 1. `interrogate_value` — 价值性问题一批(为什么做/价值假设/不做会怎样/成功长什么样),锚 PRD §背景/§目标 与上游 Evidence Ledger。
 2. `interrogate_ambiguity` — 逐章扫描落地模糊地带(业务规则/权限与状态/异常与边界/数据口径/范围),一批或多批。
-   两批清单作为 `grilling` 决策树的初始节点;先追踪事实,再逐轮提问当前 frontier,答复后重算依赖。rc 的 blocked Artifact 和 `state-update` 负责每轮状态及 DECISION 台账;用户确认锁定决策清单后再进入完成草稿。
+   两批清单作为 `grilling` 决策树的初始节点,先追踪事实,再逐轮提问。每轮顺序固定：先提交 status="blocked" 的 Artifact，确认 state 为 WAITING_FOR_INPUT，再向用户提问；当前 frontier 必须一次性包含所有前置条件已解决的未决问题。用户答复后先提交 state-update 恢复 EXECUTING，再重算 frontier 或进入锁定确认；依赖本轮未决答案的问题不得进入当前 frontier，必须留到后续轮次。AskUserQuestion 最多 4 题只是交互载体限制，不得改变 grilling frontier 的轮次语义；frontier 超过 4 题时不得使用 AskUserQuestion 压缩或拆分问题，必须用完整文本轮次一次性列出全部编号问题、推荐答案与处理路径。每题保留推荐答案，以及“①回 PM 重新提需求 ②PM 补充需求 ③直接答复”。frontier 清空后仍必须展示锁定决策清单，并取得用户共识确认。 rc 的 blocked Artifact、`WAITING_FOR_INPUT` 和 `state-update` 负责每轮状态及 DECISION 台账;用户确认锁定决策清单后再进入完成草稿。
 3. `draft` — 闭环答案聚合为 Spec 正文,按 `templates/spec.md`:产品定义引用不重写,澄清结论逐条标来源。
    - §10 实施决策(≤8 条):模块职责、接口与数据约束级;不含待改文件路径。只在澄清中确有依据时写;缺依据就留空,不得为填段虚构决策。
    - §11 测试决策(≤8 条):每条 = 用户可观察的外部行为 + 验证方式;只测外部行为,不测内部实现。

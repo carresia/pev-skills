@@ -70,7 +70,7 @@ description: |
   `artifact.answers`(question/answer/source)并给 `evidence` 带上 FACT 条目
   (脚本会自动同步进 state 的 Evidence Ledger,不要手改 state);追不到 →
   `status="blocked"`+`replan_reason`,不要编答案。
-- **提问轮次**:使用已安装的 `grilling` 技能组织未决产品决定。Planner 的价值性问题与逐章模糊清单是初始 frontier;Executor 先查 PRD、同轮 PM 产物和代码,只把无法追踪且前置条件已解决的问题交给用户。每轮按 `grilling` 的格式附推荐答案,等待答复后重算 frontier;有依赖的问题不能提前问。rc 仍负责提交 blocked Artifact、进入 `WAITING_FOR_INPUT`、通过 `state-update` 记录用户 `DECISION` 并恢复。frontier 清空后展示锁定决策清单,取得用户共识确认再提交 completed Artifact。
+- **提问轮次**：使用已安装的 `grilling` 技能组织未决产品决定。Planner 的价值性问题与逐章模糊清单是初始 frontier;Executor 先查 PRD、同轮 PM 产物和代码,只把无法追踪且前置条件已解决的问题交给用户。每轮顺序固定：先提交 status="blocked" 的 Artifact，确认 state 为 WAITING_FOR_INPUT，再向用户提问；当前 frontier 必须一次性包含所有前置条件已解决的未决问题。用户答复后先提交 state-update 恢复 EXECUTING，再重算 frontier 或进入锁定确认；依赖本轮未决答案的问题不得进入当前 frontier，必须留到后续轮次。AskUserQuestion 最多 4 题只是交互载体限制，不得改变 grilling frontier 的轮次语义；frontier 超过 4 题时不得使用 AskUserQuestion 压缩或拆分问题，必须用完整文本轮次一次性列出全部编号问题、推荐答案与处理路径。每题保留推荐答案，以及“①回 PM 重新提需求 ②PM 补充需求 ③直接答复”。frontier 清空后仍必须展示锁定决策清单，并取得用户共识确认。 rc 负责状态与台账:`grilling` 只组织问题,不写 `state.json`;用户答复通过 `state-update` 记为 `DECISION`,取得共识后才能提交 completed Artifact。
 - **Verification**(`agents/verifier.md`):独立审查。有子代理能力就 spawn 只读
   子代理,只给文件路径,不转述对话推理;无子代理就只从文件重推。报告必须
   **逐字段复述** `iterations/<N>-verification-input.json` 到

@@ -26,11 +26,11 @@
 1. **严格按 Plan 执行**,只执行 Plan 批准的问题批次。
 2. 所有结论必须标记来源类型:`[FACT]` `[INFERENCE]` `[HYPOTHESIS]` `[UNKNOWN]` `[DECISION]`,写入草稿 `evidence` 数组(提交时脚本自动并入 Evidence Ledger)。
 3. **不自答产品问题**:产品行为 / 业务规则 / 优先级 / 范围取舍,追踪不到就进未决清单。
-4. 未决问题交给已安装的 `grilling` 技能组织提问轮次。把 Plan 中价值性问题和逐章模糊点作为决策树初始节点;先追踪事实,再只呈现当前前置条件已解决的问题。每问附为什么重要、推荐答案与三选一(①回 PM 重新提需求 ②PM 补充需求 ③直接答复)。依赖本轮回答的问题留到下一轮,不要一次问完全部未决问题。artifact 置 `status="blocked"`,replan_reason 写明当前缺什么/为什么重要/怎么获取。
+4. 未决问题交给已安装的 `grilling` 技能组织提问轮次。把 Plan 中价值性问题和逐章模糊点作为决策树初始节点,先追踪事实;`replan_reason` 写明当前缺什么/为什么重要/怎么获取。每轮顺序固定：先提交 status="blocked" 的 Artifact，确认 state 为 WAITING_FOR_INPUT，再向用户提问；当前 frontier 必须一次性包含所有前置条件已解决的未决问题。用户答复后先提交 state-update 恢复 EXECUTING，再重算 frontier 或进入锁定确认；依赖本轮未决答案的问题不得进入当前 frontier，必须留到后续轮次。AskUserQuestion 最多 4 题只是交互载体限制，不得改变 grilling frontier 的轮次语义；frontier 超过 4 题时不得使用 AskUserQuestion 压缩或拆分问题，必须用完整文本轮次一次性列出全部编号问题、推荐答案与处理路径。每题保留推荐答案，以及“①回 PM 重新提需求 ②PM 补充需求 ③直接答复”。frontier 清空后仍必须展示锁定决策清单，并取得用户共识确认。
 5. 用户直接答复由 state-update 恢复补丁入账(`DECISION` 进 Evidence Ledger,evidence=澄清记录锚点,如 `01-artifact answers#q3`),脚本负责并入 Artifact,你不手工合并。
 6. 用户选"回 PM"(①或②)→ 未决问题保留在 `unresolved`,由 state-update 补丁(`back_to_prd`)转 `WAITING_FOR_PRD`,你不要试图替代 PM 修改 PRD。
 7. 发现 Plan 存在根本问题(问错了层、漏了整片区域)→ 停止,输出 `status="replan_required"`:Problem / Why Current Plan Is Invalid / New Information / Recommended Re-plan。
-8. 每轮问完由 rc 的 blocked Artifact 进入 `WAITING_FOR_INPUT`;用户回答后用 `state-update` 补丁把产品决定作为 `DECISION` 写入 Evidence Ledger,按命令返回的下一步恢复。每轮重算 frontier;全部问题闭环后向用户呈现锁定决策清单,获得共识确认后才提交 completed Artifact。`grilling` 只负责提问节奏,不写 rc 状态或台账。
+8. rc 的 blocked Artifact 负责让每轮在提问前进入 `WAITING_FOR_INPUT`;用户回答后用 `state-update` 补丁把产品决定作为 `DECISION` 写入 Evidence Ledger,脚本恢复执行后再重算 frontier。全部问题闭环后向用户呈现锁定决策清单,获得共识确认后才提交 completed Artifact。`grilling` 只负责提问节奏,不写 rc 状态或台账。
 
 ## Spec Drafting
 
