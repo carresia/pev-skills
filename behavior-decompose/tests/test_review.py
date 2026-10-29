@@ -766,5 +766,30 @@ class ChainCompleteTest(FlowMixin, ReviewFixture):
         self.assertEqual(res["status"], "COMPLETED")
 
 
+class PathSafetyTest(ReviewFixture):
+    """登记册路径安全:穿越式文件名/路径不得把读写带出运行目录。"""
+
+    def test_traversal_artifact_name_ignored(self):
+        """artifacts 登记含 ../ 条目时不被选用,不读运行目录外的文件。"""
+        outside = self.ws / "outside-artifact.json"
+        write_json(outside, make_artifact())
+        self.state["artifacts"] = ["../../outside-artifact.json"]
+        self.flush_state()
+        res = self.run_ok()
+        self.assertEqual(res["status"], "WAITING")
+        self.assertFalse(self.review_dir("r001").exists(), "不得据穿越路径派发审查")
+
+    def test_traversal_review_registry_path_rejected(self):
+        """reviews 登记册 path 非法(穿越)时整体拒绝。"""
+        self.flush_state()
+        self.state["reviews"] = [
+            {"id": "r001", "path": "../../outside-review.json", "sha256": "0" * 64}]
+        self.state["status"] = "VERIFYING"
+        self.flush_state()
+        res = self.run_fail()
+        self.assertEqual(res["status"], "REJECTED")
+        self.assertTrue(any("path 非法" in e for e in res["errors"]), res["errors"])
+
+
 if __name__ == "__main__":
     unittest.main()

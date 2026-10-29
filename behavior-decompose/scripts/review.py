@@ -23,7 +23,9 @@
 
 审查历史只追加:每次审查用唯一目录 reviews/r<NNN>/,已提交的 review 不覆盖。
 state.reviews 登记册记录每个 review 的 ID、路径与 SHA-256,复算比对可检测
-历史被覆盖或篡改(不能抵御同时改写全部文件的攻击者,完整防篡改依赖 git)。
+历史被覆盖或篡改(不能抵御同时改写全部文件的攻击者,也不设防运行目录内预置的
+符号链接——该层完整防篡改依赖 git 或外部备份)。登记册只接受运行目录内的纯
+文件名/固定相对路径,防止经登记册把读写带出运行目录。
 """
 
 import hashlib
@@ -49,6 +51,16 @@ PCT_TOLERANCE = 0.05
 
 
 # ---------------------------------------------------------------- 基础工具
+
+def safe_registry_name(name):
+    """登记册语义是纯文件名(schema 描述"只记文件名");拒绝路径分隔符与 ..,
+    防止登记册被写入穿越路径后经脚本读/写出运行目录。"""
+    return (isinstance(name, str) and name not in ("", ".", "..")
+            and "/" not in name and "\\" not in name and Path(name).name == name)
+
+
+REVIEW_PATH_PATTERN = re.compile(r"^reviews/r\d+/review\.json$")
+
 
 def canon(obj):
     return json.dumps(obj, ensure_ascii=False, sort_keys=True,
@@ -138,8 +150,12 @@ class Result:
 # ------------------------------------------------------------ 输入收集与哈希
 
 def latest_registered(state, key):
-    """登记册里编号最大的文件名(R9 保证与 iterations/ 一致)。"""
-    names = [n for n in state.get(key, []) if isinstance(n, str)]
+    """登记册里编号最大的文件名(R9 保证与 iterations/ 一致)。
+
+    只接受纯文件名(见 safe_registry_name):含路径分隔符/.. 的条目直接忽略,
+    不参与"最新"竞争,防止把读写带出运行目录。
+    """
+    names = [n for n in state.get(key, []) if safe_registry_name(n)]
     if not names:
         return None
     return max(names, key=lambda n: int(re.match(r"(\d+)", n).group(1))
@@ -294,7 +310,11 @@ def load_committed_reviews(decompose, state):
         if not isinstance(entry, dict):
             errors.append("state.reviews 含非对象条目")
             continue
-        path = decompose / entry.get("path", "")
+        rel = entry.get("path")
+        if not isinstance(rel, str) or not REVIEW_PATH_PATTERN.match(rel):
+            errors.append(f"登记册 path 非法(须形如 reviews/r001/review.json):{rel!r}")
+            continue
+        path = decompose / rel
         doc, err = read_json(path)
         if err:
             errors.append(f"登记的 review 不可读({entry.get('id')}):{err}")
